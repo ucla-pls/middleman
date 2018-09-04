@@ -30,11 +30,13 @@ share [ mkPersist
     path String
     groupId WorkGroupId
     workId WorkId Maybe
+    inStore Bool
     UniqueJobPath path
     deriving Show Generic
 
   Work json
     workerId WorkerId
+    path String
     started UTCTime
     completed UTCTime Maybe
     deriving Show Generic
@@ -83,7 +85,7 @@ getJobs =
 getUnworkedJobs :: RIO r [Entity Job]
 getUnworkedJobs =
   runDB $ do
-    selectList [ JobWorkId ==. Nothing ] []
+    selectList [ JobWorkId ==. Nothing, JobInStore ==. True ] []
 
 getJobsOfGroup :: WorkGroupId -> RIO r [Entity Job]
 getJobsOfGroup gid =
@@ -98,31 +100,47 @@ getWorkGroups =
 startWork ::
   (MonadIO m)
   => UTCTime
+  -> FilePath
   -> Worker
   -> DB m (Entity Work)
-startWork t worker = do
+startWork t path worker = do
   wid <- either entityKey id <$> insertBy worker
-  insertEntity (Work wid t Nothing)
+  insertEntity (Work wid path t Nothing)
 
-getWork :: Worker -> RIO r (Maybe (WorkId, FilePath))
-getWork wrk = do
+getWork :: Worker -> (FilePath -> RIO r FilePath) -> RIO r (Maybe (WorkId, FilePath))
+getWork wrk getWorkPath = do
   t <- getCurrentTime
   runDB $ do
     x <- selectFirst [ JobWorkId ==. Nothing ] []
     case x of
       Just j -> do
-        w <- startWork t wrk
+        p <- lift . liftRIO $ getWorkPath (jobPath (entityVal j))
+        w <- startWork t p wrk
         update (entityKey j) [ JobWorkId =. Just (entityKey w)]
         return $ Just (entityKey w, (jobPath $ entityVal j))
       Nothing ->
         return Nothing
 
+completeWork :: WorkId -> FilePath -> RIO r ()
+completeWork wid path = do
+  t <- getCurrentTime
+  runDB $ do
+    r <- updateGet wid [ WorkCompleted =. Just t ]
+    when (workPath r /= path) $
+      error $ "expected path to be " ++ path ++ " was " ++ workPath r
+
 addJob :: String -> String ->  RIO r (Entity Job)
 addJob path group =
   runDB $ do
     g <- either entityKey id <$> insertBy (WorkGroup group)
-    upsert (Job path g Nothing) [ JobGroupId =. g ]
+    upsert (Job path g Nothing False) [ JobGroupId =. g, JobInStore =. False, JobWorkId =. Nothing  ]
 
+setInStore :: JobId -> String -> RIO r ()
+setInStore key path =
+  runDB $ do
+    r <- updateGet key [ JobInStore =. True ]
+    when (jobPath r /= path) $
+      error $ "expected path to be " ++ path ++ " was " ++ jobPath r
 
 getWorkers :: RIO r [Entity Worker]
 getWorkers =

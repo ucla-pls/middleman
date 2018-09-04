@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Main (main) where
 
-import Import
+import Import hiding (argument)
 import Run
 import RIO.Process
 import Options.Applicative.Simple
@@ -27,14 +27,23 @@ main = do
          <> value 3000
        )
     ) $ do
+
       addCommand "start"
         "Start the server"
         (const ModeServer)
         (pure ())
+
       addCommand "work"
         "Try to get work on the server"
-        (const $ ModeWorker (WorkerOptions "http://localhost"))
+        (const $ ModeWorker (WorkerOptions "localhost" "file:///nix/store"))
         (pure ())
+
+      addCommand "push"
+        "Try to push a derivation onto the server"
+        (\fp -> ModeClient (ClientOptions "localhost" fp))
+        ( argument str
+          (metavar "drv" <> help "The derivation to upload to the server")
+        )
 
   lo <- logOptionsHandle stderr (view optionsVerbose options_)
   pc <- mkDefaultProcessContext

@@ -1,34 +1,54 @@
 module Worker where
 
-import Import hiding (view)
-
-import RIO.Process
-import DTOs
-import Network.Wreq
-
+import Data.Aeson
 import Data.Aeson.Lens
 import Control.Lens
+
+import Import
+import Nix
+import DTOs
+import ServerAccess
+import RIO.Directory
 
 worker :: RIO WorkerApp ()
 worker = do
   -- Ask for available jobs
-  port <- view optionsPort
-  host <- view wopsHostUrl
 
-  r <- liftIO $ post
-    (host ++ ":" ++ show port ++ "/work/test")
-    ((WorkRequestDTO "myname" ^. re _JSON) :: ByteString)
+  r <- post "work" . toJSON $ WorkRequestDTO "myname"
 
-  logInfo $ displayShow r
+  logDebug $ displayShow r
   case r ^? responseBody . _JSON of
-    Just (wid, path) -> do
+    Just (WorkNeededDTO path wid) -> do
       -- Do the work.
-      logInfo $ "Got this from the server " <> displayShow ((wid, path) :: (Int, String))
+      logDebug $ "Got " <> displayShow path <> " from the server."
+      succ <- realizeDrv path "here"
+      logDebug $ "Returned "<> displayShow succ
 
-      (rc, str) <- proc "echo" ["hello", "world"] readProcessStdout
-      logInfo $ "Returned "<> displayShow str
+      case succ of
+        Just [fp] -> do
 
+          path <- canonicalizePath fp
+
+          store <- view wopsStoreUrl
+          didCopy <- copyToStore store [path]
+          when (not didCopy) $
+            error $ "Could not transfer " ++ show path ++ " to server."
+
+          logDebug "Transfer succeeded..."
+
+          r' <- put ("work/" ++ show wid ++ "/path") (toJSON $ path)
+
+          case r' ^. responseStatus . statusCode of
+            200 ->
+              logDebug "Successfully completed job"
+            _ ->
+              logError $ "Failed " <> displayShow (r' ^. responseStatus)
+
+        _ -> do
+          logError $ "Got invalid result from running derivation: " <> displayShow succ
+          error "Got invalid results from running derivation"
       -- Push the work to the server.
     Nothing -> do
       logError "No more jobs"
       return ()
+

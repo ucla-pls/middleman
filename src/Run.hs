@@ -9,12 +9,14 @@ import Network.HTTP.Types.Status
 import Network.Wai (remoteHost)
 import Network.Socket.Internal (SockAddr (..))
 
-import Database.Persist.Sql (toSqlKey)
+import Database.Persist.Sql (toSqlKey, fromSqlKey)
+import RIO.Directory
 
 import Model
+import Nix
 import DTOs
 import Worker
-
+import Client
 
 run :: RIO App ()
 run = do
@@ -25,12 +27,16 @@ run = do
     ModeWorker wops -> do
       app <- ask
       runRIO (WorkerApp app wops) worker
-    _ ->
-      logInfo "Not yet implemented"
-
+    ModeClient cops -> do
+      app <- ask
+      runRIO (ClientApp app cops) client
 
 server :: RIO App ()
 server = do
+  env <- ask
+  let
+    db :: (MonadIO m) => RIO App a -> m a
+    db = runRIO env
   logInfo "Starting server"
   migrateDB
   liftIO . scotty 3000 $ do
@@ -43,9 +49,21 @@ server = do
       json x
 
     post "/jobs" $ do
-      NewJobDTO job group <- jsonData
-      job' <- db $ addJob job group
+      NewJobDTO path group <- jsonData
+      job' <- db $ addJob path group
+      status created201
       json job'
+
+    put "/jobs/:id/nar" $ do
+      key <- toSqlKey <$> param "id"
+      bs <- body
+      x <- runRIO env (importNar bs)
+      case x of
+        Just [fp] -> do
+          db $ setInStore key fp
+          status created201
+        _ -> do
+          error $ "Bad NAR file, returned " ++ show x
 
     post "/work" $ do
       x <- remoteHost <$> request
@@ -53,20 +71,32 @@ server = do
       work <- case x of
         SockAddrInet _ host ->
           db $ getWork (Worker name host)
+             (\p -> do
+                 drvOutput <- readDerivationOutput p
+                 case drvOutput of
+                   Just path -> return path
+                   Nothing ->
+                     error $ "Could not read output path from " ++ p
+             )
         _ -> raise "Needs to connect with an IP4 address"
       case work of
-        Just w -> do
+        Just (wid, drv) -> do
           status created201
-          json w
+          json (WorkNeededDTO drv (fromIntegral $ fromSqlKey wid))
         Nothing ->
           status noContent204
 
-    post "/work/test" $ do
-      status created201
-      json (0 :: Int , "/some/path" :: String)
+    put "/work/:id/path" $ do
+      wid <- toSqlKey <$> param "id"
+      path <- jsonData
+      b <- liftIO $ doesPathExist path
+      if b
+        then do
+          db $ completeWork wid path
+          status ok200
+        else
+          status badRequest400
 
-    put "/work/:id" $ do
-      text "good"
 
     get "/groups" $ do
       x <- db getWorkGroups
@@ -80,5 +110,3 @@ server = do
     get "/workers" $ do
       json =<< db getWorkers
 
-  where
-    db = flip runReaderT () . liftRIO
