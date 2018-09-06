@@ -2,26 +2,37 @@ module Worker where
 
 import Data.Aeson
 import Data.Aeson.Lens
-import Control.Lens
 
-import Import
+import Database.Persist.Sql (Entity(..), fromSqlKey)
+
+import Import hiding ((<.>))
 import Nix
 import DTOs
+import Model
 import ServerAccess
 import RIO.Directory
+import RIO.FilePath
 
-worker :: RIO WorkerApp ()
-worker = do
+
+worker :: WorkerOptions -> RIO App ()
+worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) $ do
   -- Ask for available jobs
-
-  r <- post "work" . toJSON $ WorkRequestDTO "myname"
-
-  logDebug $ displayShow r
+  let localworkername = "here"
+  r <- post "api/work" . toJSON $ WorkRequestDTO (ops ^. wopsName)
   case r ^? responseBody . _JSON of
-    Just (WorkNeededDTO path wid) -> do
+    Just (Entity _ job) -> do
       -- Do the work.
-      logDebug $ "Got " <> displayShow path <> " from the server."
-      succ <- realizeDrv path "here"
+
+      let drv = "/nix/store" </> jobDerivation job <.> "drv"
+      logDebug $ "Got " <> displayShow drv <> " from the server."
+
+      (output, wid) <- case (do out <- jobOutput job; wid <- jobWorkId job; return (out,wid)) of
+         Just (out, wid) ->
+           return (out, wid)
+         Nothing ->
+           throwString "Badly formed data from the server"
+
+      succ <- realizeDrv drv localworkername
       logDebug $ "Returned "<> displayShow succ
 
       case succ of
@@ -29,14 +40,13 @@ worker = do
 
           path <- canonicalizePath fp
 
-          store <- view wopsStoreUrl
-          didCopy <- copyToStore store [path]
-          when (not didCopy) $
-            error $ "Could not transfer " ++ show path ++ " to server."
+          when (path /= "/nix/store" </> output) .
+            throwString $ "Returned path different from the job output: " ++ show path ++ " /= " ++ show output
 
+          copyToStore (ops ^. wopsStoreUrl) [path]
           logDebug "Transfer succeeded..."
 
-          r' <- put ("work/" ++ show wid ++ "/path") (toJSON $ path)
+          r' <- put ("api/work/" ++ show (fromSqlKey wid) ++ "/success") (toJSON $ WorkSuccededDTO True)
 
           case r' ^. responseStatus . statusCode of
             200 ->

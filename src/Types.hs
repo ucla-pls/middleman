@@ -25,43 +25,51 @@ data App = App
 data WorkerOptions = WorkerOptions
   { _wopsHostUrl :: !String
   , _wopsStoreUrl :: !String
+  , _wopsName :: !String
   }
 
 data ClientOptions = ClientOptions
   { _copsHostUrl :: !String
+  , _copsStoreUrl :: !String
   , _copsDrv :: !String
   }
 
+data ServerOptions = ServerOptions
+  { _sopsRunMigration :: !Bool
+  , _sopsConnectionString :: !Text
+  , _sopsLocalStore :: !LocalStore
+  }
+
+data LocalStore = LocalStore
+  { _storeGCRoot :: !String
+  }
+
+
 data Mode
-  = ModeServer
+  = ModeServer !ServerOptions
   | ModeClient !ClientOptions
   | ModeWorker !WorkerOptions
 
-data WorkerApp = WorkerApp
-  { wappApp :: !App
-  , wappOptions :: !WorkerOptions
+
+data OptionsWithApp a = OptionsWithApp
+  { innerApp :: !App
+  , extraOptions :: !a
   }
 
-data ClientApp = ClientApp
-  { cappApp :: !App
-  , cappOptions :: !ClientOptions
-  }
+type ClientApp = OptionsWithApp ClientOptions
+type WorkerApp = OptionsWithApp WorkerOptions
 
 makeClassy ''Options
 makeClassy ''WorkerOptions
 makeClassy ''ClientOptions
-
-wInnerApp :: Lens' WorkerApp App
-wInnerApp = lens wappApp (\x y -> x { wappApp = y})
-
-cInnerApp :: Lens' ClientApp App
-cInnerApp = lens cappApp (\x y -> x { cappApp = y})
+makeClassy ''ServerOptions
+makeClassy ''LocalStore
 
 instance HasWorkerOptions WorkerApp where
-  workerOptions = lens wappOptions (\x y -> x { wappOptions = y })
+  workerOptions = lens extraOptions (\x y -> x { extraOptions = y })
 
 instance HasClientOptions ClientApp where
-  clientOptions = lens cappOptions (\x y -> x { cappOptions = y })
+  clientOptions = lens extraOptions (\x y -> x { extraOptions = y })
 
 instance HasOptions App where
   options = lens appOptions (\x y -> x { appOptions = y })
@@ -72,29 +80,26 @@ instance HasLogFunc App where
 instance HasProcessContext App where
   processContextL = lens appProcessContext (\x y -> x { appProcessContext = y })
 
+class HasApp env where
+  innerAppL :: Lens' env App
 
-instance HasOptions WorkerApp where
-  options = wInnerApp . options
+instance HasApp (OptionsWithApp hl) where
+  innerAppL = lens innerApp (\x y -> x { innerApp = y })
 
-instance HasLogFunc WorkerApp where
-  logFuncL = wInnerApp . logFuncL
+instance HasOptions (OptionsWithApp env) where
+  options = innerAppL . options
 
-instance HasProcessContext WorkerApp where
-  processContextL = wInnerApp . processContextL
+instance HasLogFunc (OptionsWithApp env) where
+  logFuncL = innerAppL . logFuncL
+
+instance HasProcessContext (OptionsWithApp env) where
+  processContextL = innerAppL . processContextL
 
 instance HasServerAccess WorkerApp where
   serverPort = options . optionsPort
   serverName = workerOptions . wopsHostUrl
 
-instance HasOptions ClientApp where
-  options = cInnerApp . options
-
-instance HasLogFunc ClientApp where
-  logFuncL = cInnerApp . logFuncL
-
-instance HasProcessContext ClientApp where
-  processContextL = cInnerApp . processContextL
-
 instance HasServerAccess ClientApp where
   serverPort = options . optionsPort
   serverName = clientOptions . copsHostUrl
+

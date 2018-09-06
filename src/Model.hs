@@ -1,6 +1,6 @@
-{-# LANGUAGE QuasiQuotes     #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE QuasiQuotes       #-}
+{-# LANGUAGE TemplateHaskell   #-}
 
 module Model where
 
@@ -9,13 +9,11 @@ module Model where
 import           RIO
 import           RIO.Time
 
+import           Data.Pool
 import           Database.Persist
 import           Database.Persist.Sql
-import           Database.Persist.Sqlite
 import           Database.Persist.TH
 
-import           Conduit
-import           Control.Monad.Logger (NoLoggingT)
 
 share [ mkPersist
           sqlSettings {
@@ -27,18 +25,19 @@ share [ mkPersist
             }
       , mkMigrate "migrateAll"] [persistLowerCase|
   Job json
-    path String
+    derivation String
     groupId WorkGroupId
     workId WorkId Maybe
-    inStore Bool
-    UniqueJobPath path
+    output String Maybe
+    UniqueJobPath derivation
     deriving Show Generic
 
   Work json
     workerId WorkerId
-    path String
+    jobId JobId
     started UTCTime
     completed UTCTime Maybe
+    success Bool Maybe
     deriving Show Generic
 
   Worker json
@@ -53,95 +52,124 @@ share [ mkPersist
     deriving Show Generic
 |]
 
--- deriveJSON (def 3) ''Job
--- deriveJSON (def 4) ''Work
--- deriveJSON (def 6) ''Worker
--- deriveJSON (def 9) ''WorkGroup
-
--- class IsSqlBackend b => HasSqlBackend b r where
---   sqlBackendL :: Lens' r b
-
--- class IsSqlBackend b => HasSqlBackend b r where
---   sqlBackendL :: Lens' r b
-
+class HasSqlPool env where
+  dbSqlPool :: Lens' env (Pool SqlBackend)
 
 runDB ::
-  ReaderT SqlBackend (NoLoggingT (ResourceT (RIO r))) a
-  -> RIO r a
-runDB f = runSqlite "example.sqlite" $ f
+  (MonadReader env m, MonadUnliftIO m, HasSqlPool env)
+  => ReaderT SqlBackend m a
+  -> m a
+runDB f = do
+  p <- view dbSqlPool
+  runSqlPool f p
 
-
-type DB m a = ReaderT SqlBackend m a
-
-migrateDB :: RIO r ()
+migrateDB ::
+  (HasSqlPool env)
+  => RIO env ()
 migrateDB =
   runDB $ runMigration migrateAll
 
-getJobs :: RIO r [Entity Job]
+getJobs ::
+  HasSqlPool env
+  => RIO env [Entity Job]
 getJobs =
   runDB $ do
     selectList [] []
 
-getUnworkedJobs :: RIO r [Entity Job]
+getUnworkedJobs ::
+  HasSqlPool env
+  => RIO env [Entity Job]
 getUnworkedJobs =
   runDB $ do
-    selectList [ JobWorkId ==. Nothing, JobInStore ==. True ] []
+    selectList [ JobWorkId ==. Nothing, JobOutput !=. Nothing ] []
 
-getJobsOfGroup :: WorkGroupId -> RIO r [Entity Job]
+getJobsOfGroup ::
+  HasSqlPool env
+  => WorkGroupId
+  -> RIO env [Entity Job]
 getJobsOfGroup gid =
   runDB $ do
     selectList [ JobGroupId ==. gid ] []
 
-getWorkGroups :: RIO r [Entity WorkGroup]
+getWorkGroups ::
+  HasSqlPool env
+  => RIO env [Entity WorkGroup]
 getWorkGroups =
   runDB $ do
     selectList [] []
 
 startWork ::
-  (MonadIO m)
+  (MonadIO m, IsSqlBackend env, PersistUniqueWrite env)
   => UTCTime
-  -> FilePath
+  -> JobId
   -> Worker
-  -> DB m (Entity Work)
-startWork t path worker = do
+  -> ReaderT env m (Entity Work)
+startWork t jid worker = do
   wid <- either entityKey id <$> insertBy worker
-  insertEntity (Work wid path t Nothing)
+  insertEntity (Work wid jid t Nothing Nothing)
 
-getWork :: Worker -> (FilePath -> RIO r FilePath) -> RIO r (Maybe (WorkId, FilePath))
-getWork wrk getWorkPath = do
+markWorkAsCompleted ::
+  HasSqlPool env
+  => WorkId
+  -> Bool
+  -> RIO env (Maybe (Entity Work))
+markWorkAsCompleted wid succ = do
   t <- getCurrentTime
   runDB $ do
-    x <- selectFirst [ JobWorkId ==. Nothing ] []
-    case x of
+    update wid [ WorkSuccess =. Just succ, WorkCompleted =. Just t ]
+    getEntity wid
+
+getSomeJobWithNewWork ::
+  (HasSqlPool env)
+  => Worker
+  -> RIO env (Maybe (Entity Job))
+getSomeJobWithNewWork wrk = do
+  t <- getCurrentTime
+  runDB $ do
+    selectFirst [ JobWorkId ==. Nothing ] [] >>= \case
       Just j -> do
-        p <- lift . liftRIO $ getWorkPath (jobPath (entityVal j))
-        w <- startWork t p wrk
-        update (entityKey j) [ JobWorkId =. Just (entityKey w)]
-        return $ Just (entityKey w, (jobPath $ entityVal j))
+        w <- startWork t (entityKey j) wrk
+        j' <- updateGet (entityKey j) [ JobWorkId =. Just (entityKey w)]
+        return $ Just (j { entityVal = j'})
       Nothing ->
         return Nothing
 
-completeWork :: WorkId -> FilePath -> RIO r ()
-completeWork wid path = do
-  t <- getCurrentTime
-  runDB $ do
-    r <- updateGet wid [ WorkCompleted =. Just t ]
-    when (workPath r /= path) $
-      error $ "expected path to be " ++ path ++ " was " ++ workPath r
+-- completeWork ::
+--   (HasSqlPool env)
+--   => WorkId
+--   -> FilePath
+--   -> RIO env ()
+-- completeWork wid path = do
+--   t <- getCurrentTime
+--   runDB $ do
+--     r <- updateGet wid [ WorkCompleted =. Just t ]
+--     when (workPath r /= path) $
+--       error $ "expected path to be " ++ path ++ " was " ++ workPath r
 
-addJob :: String -> String ->  RIO r (Entity Job)
-addJob path group =
+makeJob ::
+  HasSqlPool env
+  => String
+  -> String
+  -> RIO env (Entity Job)
+makeJob path group =
   runDB $ do
     g <- either entityKey id <$> insertBy (WorkGroup group)
-    upsert (Job path g Nothing False) [ JobGroupId =. g, JobInStore =. False, JobWorkId =. Nothing  ]
+    upsert (Job path g Nothing Nothing)
+      [ JobGroupId =. g, JobOutput =. Nothing, JobWorkId =. Nothing  ]
 
-setInStore :: JobId -> String -> RIO r ()
-setInStore key path =
-  runDB $ do
-    r <- updateGet key [ JobInStore =. True ]
-    when (jobPath r /= path) $
-      error $ "expected path to be " ++ path ++ " was " ++ jobPath r
+-- setInStore ::
+--   HasSqlPool env
+--   => JobId
+--   -> String
+--   -> RIO env ()
+-- setInStore key path =
+--   runDB $ do
+--     r <- updateGet key [ JobInStore =. True ]
+--     when (jobPath r /= path) $
+--       error $ "expected path to be " ++ path ++ " was " ++ jobPath r
 
-getWorkers :: RIO r [Entity Worker]
+getWorkers ::
+  HasSqlPool env
+  => RIO env [Entity Worker]
 getWorkers =
   runDB $ selectList [] []

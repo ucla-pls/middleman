@@ -21,6 +21,11 @@ data WorkNeededDTO = WorkNeededDTO
   , wndtoWorkId :: !Int64
   } deriving (Show)
 
+data WorkSuccededDTO = WorkSuccededDTO
+  { wsdtoSuccess :: !Bool
+  } deriving (Show)
+
 deriveJSON (def 5) ''NewJobDTO
 deriveJSON (def 5) ''WorkRequestDTO
 deriveJSON (def 5) ''WorkNeededDTO
+deriveJSON (def 5) ''WorkSuccededDTO

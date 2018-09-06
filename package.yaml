@@ -37,6 +37,10 @@ dependencies:
 - wreq
 - lens-aeson
 - lens
+- resource-pool
+- unix
+- mtl
+- transformers
 
 ghc-options:
 - -Wall

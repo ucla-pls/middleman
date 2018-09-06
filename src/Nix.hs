@@ -22,10 +22,11 @@ copyToStore ::
   (HasLogFunc env, HasProcessContext env)
   => String
   -> [FilePath] -- ^ Paths
-  -> RIO env Bool
+  -> RIO env ()
 copyToStore store fps = do
   ec <- proc "nix" (["copy", "--to", store] ++ fps) $ runProcess
-  return $ ec == ExitSuccess
+  when (ec /= ExitSuccess) $
+    throwString $ "Could not transfer " ++ show fps ++ " to "++ show store
 
 copyFromStore ::
   (HasLogFunc env, HasProcessContext env)
@@ -69,18 +70,18 @@ realizeDrv drv root = do
     readProcessLines
 
 readDerivation ::
-  (HasLogFunc env, HasProcessContext env)
+  (HasLogFunc env, HasProcessContext env, MonadReader env m, MonadIO m)
   => FilePath
-  -> RIO env (Maybe NixDerivation)
+  -> m (Maybe NixDerivation)
 readDerivation p = do
   x :: Maybe (Map FilePath NixDerivation) <-
     proc "nix" ["show-derivation", p] $ readProcessJSON
   return . join $ Map.lookup p <$> x
 
 readDerivationOutput ::
-  (HasLogFunc env, HasProcessContext env)
+  (HasLogFunc env, HasProcessContext env, MonadReader env m, MonadIO m)
   => FilePath
-  -> RIO env (Maybe FilePath)
+  -> m (Maybe FilePath)
 readDerivationOutput p = do
   x :: Maybe J.Value <-
     proc "nix" ["show-derivation", p] $ readProcessJSON
