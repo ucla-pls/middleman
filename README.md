@@ -79,3 +79,10 @@ nix copy --to ssh://<user>@<store> $(nix-store -r <the derivation>.drv)
 ```
 
 
+
+# TODO
+
+- Create a html web-page for managing the server
+- Allow worker to work on more than one thread at a time
+- Allow the client to wait for the process to be done
+

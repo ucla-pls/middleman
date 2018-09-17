@@ -41,6 +41,8 @@ dependencies:
 - unix
 - mtl
 - transformers
+- blaze-html
+- bytestring
 
 ghc-options:
 - -Wall
