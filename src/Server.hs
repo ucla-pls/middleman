@@ -77,6 +77,7 @@ createNewJob ::
   -> String
   -> RIO env (Entity Job)
 createNewJob drv group = do
+  logDebug $ "Create new work at " <> displayShow drv <> " with group " <> displayShow group
   e <- makeJob drv group
   storeCreateGCRoot drv (drv <.> "drv")
   return $ e
@@ -87,6 +88,7 @@ publishJob ::
   => JobId
   -> RIO env (Either TL.Text (Entity Job))
 publishJob key = runExceptT $ do
+  logDebug $ "Publishing work " <> displayShow key
   jm <- lift . runDB $ DB.get key
   case jm of
     Just job -> do
@@ -106,22 +108,26 @@ publishJob key = runExceptT $ do
       fail $ "Key not found: " ++ show key
 
 -- | Create new work and return the job
-createWork ::
-  (HasSqlPool env)
+findNewWork ::
+  (HasSqlPool env, HasLogFunc env)
   => Worker
   -> RIO env (Maybe (Entity Job))
-createWork worker = do
+findNewWork worker = do
+  logDebug $ "Find work with worker " <> displayShow worker
   getSomeJobWithNewWork worker
 
 -- | Mark the work as done
 finishWork ::
-  (HasSqlPool env)
+  (HasSqlPool env, HasLogFunc env)
   => WorkId
   -> Bool
   -> RIO env (Either TL.Text (Entity Work))
 finishWork wid succ = runExceptT $ do
+  logDebug $ "Finish work " <> displayShow wid <> " with status " <> displayShow succ
+
   w <- maybe (throwE "Could not find work.") return
     =<< (lift . runDB $ DB.get wid)
+
   j <- maybe (throwE "Work does not point to a valid job") return
     =<< (lift . runDB $ DB.get (workJobId w))
 
@@ -135,6 +141,7 @@ finishWork wid succ = runExceptT $ do
         "Did not find " <> displayShow (jobOutput j) <> " in the store."
 
   work <- lift $ markWorkAsCompleted wid succ
+
   maybe (throwE "Unexpected error") return $ work
 
 
@@ -202,7 +209,7 @@ api = do
       WorkRequestDTO name <- jsonData
       case remoteHost req of
         SockAddrInet _ host -> do
-          work <- lift $ createWork (Worker name host)
+          work <- lift $ findNewWork (Worker name host)
           case work of
             Just workneeded-> do
               status created201

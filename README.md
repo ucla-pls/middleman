@@ -78,8 +78,6 @@ back using:
 nix copy --to ssh://<user>@<store> $(nix-store -r <the derivation>.drv)
 ```
 
-
-
 # TODO
 
 - Create a html web-page for managing the server

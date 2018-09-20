@@ -43,6 +43,7 @@ dependencies:
 - transformers
 - blaze-html
 - bytestring
+- http-client
 
 ghc-options:
 - -Wall

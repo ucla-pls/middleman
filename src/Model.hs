@@ -30,6 +30,7 @@ share [ mkPersist
     workId WorkId Maybe
     output String Maybe
     UniqueJobPath derivation
+    UniqueJobWorkId workId !force
     deriving Show Generic
 
   Work json
@@ -117,6 +118,12 @@ markWorkAsCompleted wid succ = do
   t <- getCurrentTime
   runDB $ do
     update wid [ WorkSuccess =. Just succ, WorkCompleted =. Just t ]
+    when (not succ) $ do
+      getBy (UniqueJobWorkId $ Just wid) >>= \case
+        Just x ->
+          update (entityKey x) [ JobWorkId =. Nothing]
+        Nothing ->
+          return ()
     getEntity wid
 
 getSomeJobWithNewWork ::
@@ -154,7 +161,7 @@ makeJob ::
 makeJob path group =
   runDB $ do
     g <- either entityKey id <$> insertBy (WorkGroup group)
-    upsert (Job path g Nothing Nothing)
+    upsertBy (UniqueJobPath path) (Job path g Nothing Nothing)
       [ JobGroupId =. g, JobOutput =. Nothing, JobWorkId =. Nothing  ]
 
 -- setInStore ::

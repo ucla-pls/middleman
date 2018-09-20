@@ -1,15 +1,18 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Nix where
 
+import Import hiding (view, (<.>))
+
 import TH
+
 import Data.Aeson.TH
 import qualified Data.Aeson as J
 import Data.Aeson.Lens
-import Import hiding (view)
+
 import RIO.Process
 import RIO.Text as Text
+import RIO.FilePath
 import qualified RIO.ByteString.Lazy as BL
-
 import qualified RIO.Map as Map
 
 data NixDerivation = NixDerivation
@@ -17,6 +20,13 @@ data NixDerivation = NixDerivation
   } deriving (Show, Generic)
 
 deriveJSON (def 4) ''NixDerivation
+
+newtype Derivation = Derivation
+  { drvName :: String
+  } deriving (Show)
+
+derivationInStore :: Derivation -> FilePath
+derivationInStore drv =  "/nix/store" </> ( drvName drv ) <.> "drv"
 
 copyToStore ::
   (HasLogFunc env, HasProcessContext env)
@@ -61,12 +71,12 @@ exportNar fps = do
 
 realizeDrv ::
   (HasLogFunc env, HasProcessContext env)
-  => FilePath -- ^ Derivation
+  => Derivation -- ^ Derivation
   -> FilePath -- ^ Root
   -> RIO env (Maybe [FilePath])
 realizeDrv drv root = do
   proc "nix-store"
-    ["-r", drv, "--add-root", root, "--indirect"]
+    ["-r", derivationInStore drv, "--add-root", root, "--indirect"]
     readProcessLines
 
 readDerivation ::

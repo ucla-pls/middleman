@@ -1,11 +1,15 @@
 module ServerAccess
   ( HasServerAccess (..)
+
   , module Network.Wreq
   , get
   , put
   , post
 
   , fullUrl
+
+  , Network.HTTP.Client.HttpException (..)
+  , Network.HTTP.Client.HttpExceptionContent (..)
   )
 where
 
@@ -15,9 +19,10 @@ import Control.Lens
 
 import qualified RIO.ByteString.Lazy as BL
 
-import Network.Wreq hiding (post, put, get)
 import qualified Network.Wreq as WR
+import Network.Wreq hiding (post, put, get)
 import qualified Network.Wreq.Types as WR
+import qualified Network.HTTP.Client
 
 class HasServerAccess env where
   serverPort :: Lens' env Int
@@ -25,9 +30,9 @@ class HasServerAccess env where
 
 
 fullUrl ::
-  HasServerAccess env
+  (HasServerAccess env, Contravariant f)
   => String
-  -> Getter env String
+  -> (String -> f String) -> env -> f env
 fullUrl path =
   to (\a -> "http://" ++ a ^. serverName ++ ":" ++ show (a ^. serverPort) ++ "/" ++ path)
 
