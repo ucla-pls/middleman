@@ -14,6 +14,8 @@ import           Database.Persist
 import           Database.Persist.Sql
 import           Database.Persist.TH
 
+import           Database.Persist.MoreTypes ()
+import           Data.Success (Success(..))
 
 share [ mkPersist
           sqlSettings {
@@ -38,7 +40,7 @@ share [ mkPersist
     jobId JobId
     started UTCTime
     completed UTCTime Maybe
-    success Bool Maybe
+    success Success Maybe
     deriving Show Generic
 
   Worker json
@@ -112,13 +114,13 @@ startWork t jid worker = do
 markWorkAsCompleted ::
   HasSqlPool env
   => WorkId
-  -> Bool
+  -> Success
   -> RIO env (Maybe (Entity Work))
 markWorkAsCompleted wid succ = do
   t <- getCurrentTime
   runDB $ do
     update wid [ WorkSuccess =. Just succ, WorkCompleted =. Just t ]
-    when (not succ) $ do
+    when (succ == Retry) $  do
       getBy (UniqueJobWorkId $ Just wid) >>= \case
         Just x ->
           update (entityKey x) [ JobWorkId =. Nothing]
@@ -133,7 +135,7 @@ getSomeJobWithNewWork ::
 getSomeJobWithNewWork wrk = do
   t <- getCurrentTime
   runDB $ do
-    selectFirst [ JobWorkId ==. Nothing ] [] >>= \case
+    selectFirst [ JobWorkId ==. Nothing, JobOutput !=. Nothing ] [] >>= \case
       Just j -> do
         w <- startWork t (entityKey j) wrk
         j' <- updateGet (entityKey j) [ JobWorkId =. Just (entityKey w)]

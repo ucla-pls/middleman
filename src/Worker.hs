@@ -4,13 +4,11 @@ import Data.Either
 import Data.Maybe
 
 import Data.Aeson
-
-import Database.Persist.Sql (fromSqlKey)
+import Data.Success
 
 import Import hiding ((<.>))
 import Nix
 import DTOs
-import Model
 import ServerAccess
 
 import RIO.Directory
@@ -38,14 +36,18 @@ worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) . forever $ do
   where
     reportFailureToServer = \case
       Just (_, _, workId) ->
-        reportResult workId False
+        reportResult workId Retry
       Nothing ->
         return ()
 
     computeAndCopyToServer (drv, output, workId) = do
-      path <- performJob drv output
-      copyToStore (ops ^. wopsStoreUrl) [path]
-      reportResult workId True
+      res <- performJob drv output
+      case res of
+        Just path -> do
+          copyToStore (ops ^. wopsStoreUrl) [path]
+          reportResult workId Succeded
+        Nothing ->
+          reportResult workId Failed
 
     waitForInput = do
       let delay :: Double = 1.0
@@ -62,7 +64,7 @@ performJob ::
   -- ^ Derivation name
   -> String
   -- ^ Expected output path
-  -> RIO env FilePath
+  -> RIO env (Maybe FilePath)
 performJob drv output = do
   succ <- realizeDrv drv "here"
   case succ of
@@ -74,20 +76,19 @@ performJob drv output = do
             ( throwIO $ JobExecutedWrong
               ( "Returned path different: " ++ show path ++ " /= " ++ show output )
             )
-          return path
+          return $ Just path
         _ -> do
           throwIO . JobExecutedWrong $
             "Returned more than one path: " ++ show fps
     Nothing ->
-      throwIO . JobExecutedWrong $
-        "Job did not complete."
+      return Nothing
 
 -- | getWork pools the server for work. If the server has work, return the Job
 -- to work on, else return Nothing.
 getWork ::
   (HasServerAccess env, MonadUnliftIO m, MonadReader env m)
   => String
-  -> m (Maybe (Derivation, FilePath, Key Work))
+  -> m (Maybe (Derivation, String, Int64))
 getWork workerName = do
   r <-
     post "api/work"
@@ -110,23 +111,17 @@ getWork workerName = do
 
   where
     parseResponseBody r =  do
-      job <- eitherDecode (r ^. responseBody)
-      output <- toEither "Needs to have a output" $
-        jobOutput job
-      wid <- toEither "Needs to have a work id" $
-        jobWorkId job
-      return ( Derivation (jobDerivation job), output, wid )
-
-    toEither e m = maybe (Left e) Right m
+      wnd <- eitherDecode (r ^. responseBody)
+      return ( Derivation (wndtoDerivation wnd), wndtoOutput wnd, wndtoWorkId wnd )
 
 reportResult ::
   (HasServerAccess env, MonadUnliftIO m, MonadReader env m)
-  => WorkId
-  -> Bool
+  => Int64
+  -> Success
   -> m ()
 reportResult wid val = do
   _ <-
-    put ("api/work/" ++ show (fromSqlKey wid) ++ "/success")
+    put ("api/work/" ++ show wid ++ "/success")
       ( toJSON $ WorkSuccededDTO val )
     `catch`
     (throwIO . FailedRequest)

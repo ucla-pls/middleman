@@ -4,8 +4,7 @@ module Server (server) where
 
 import           Import                    hiding ((<.>))
 
-import           Database.Persist.Sql      (Entity, SqlBackend, fromSqlKey,
-                                            toSqlKey)
+import           Database.Persist.Sql      (Entity, SqlBackend, toSqlKey)
 import qualified Database.Persist.Sql      as DB
 import           Database.Persist.Sqlite   (withSqlitePool)
 import           System.Posix.Files        (createSymbolicLink, readSymbolicLink)
@@ -14,7 +13,6 @@ import           RIO.FilePath              (takeFileName, (<.>), (</>))
 import           RIO.Process
 import qualified RIO.Text.Lazy             as TL
 import           Control.Monad.Trans.Except
-import qualified Control.Monad.State.Class as MS
 import           Network.HTTP.Types.Status
 import           Network.Socket.Internal   (SockAddr (..))
 import           Network.Wai
@@ -25,6 +23,8 @@ import           Text.Blaze.Html.Renderer.Utf8 (renderHtmlBuilder)
 import           Control.Monad.Logger      (runNoLoggingT)
 import           Data.Pool
 import qualified Data.ByteString.Builder as BL
+
+import Data.Success
 
 import           DTOs
 import           Model
@@ -120,9 +120,10 @@ findNewWork worker = do
 finishWork ::
   (HasSqlPool env, HasLogFunc env)
   => WorkId
-  -> Bool
+  -> Success
   -> RIO env (Either TL.Text (Entity Work))
 finishWork wid succ = runExceptT $ do
+
   logDebug $ "Finish work " <> displayShow wid <> " with status " <> displayShow succ
 
   w <- maybe (throwE "Could not find work.") return
@@ -134,7 +135,7 @@ finishWork wid succ = runExceptT $ do
   output <- maybe (throwE "Job does not have a valid output path.") return $
     jobOutput j
 
-  when succ $ do
+  when (succ == Succeded) $ do
     found <- doesPathExist $ "/nix/store" </> output
     when (not found) $
       throwE . utf8BuilderToLazyText $
@@ -209,11 +210,20 @@ api = do
       WorkRequestDTO name <- jsonData
       case remoteHost req of
         SockAddrInet _ host -> do
-          work <- lift $ findNewWork (Worker name host)
-          case work of
-            Just workneeded-> do
-              status created201
-              json workneeded
+          mjob <- lift $ findNewWork (Worker name host)
+          case mjob of
+            Just (DB.Entity _ job) -> do
+              let mdto = do
+                   let wndtoDerivation = jobDerivation job
+                   wndtoOutput <- jobOutput job
+                   wndtoWorkId <- DB.fromSqlKey <$> jobWorkId job
+                   return $ WorkNeededDTO {..}
+              case mdto of
+                Just dto -> do
+                  status created201
+                  json dto
+                Nothing -> do
+                  fail $ "Something went wrong"
             Nothing ->
               status noContent204
         _ -> do
