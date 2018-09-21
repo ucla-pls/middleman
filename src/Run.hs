@@ -1,14 +1,25 @@
-module Run (run) where
+module Run
+  ( run
+  , Mode (..)
+  , WorkerOptions(..)
+  , ServerOptions(..)
+  , ClientOptions(..)
+  ) where
 
-import Import
+import           Import
 
-import Worker
-import Client
-import Server
+import           Client
+import           Server
+import           Worker
 
-run :: RIO App ()
-run = do
-  mode <- asks appMode
+
+data Mode
+  = ModeServer !ServerOptions
+  | ModeClient !ClientOptions
+  | ModeWorker !WorkerOptions
+
+run :: Mode -> RIO App ()
+run mode = do
   case mode of
     ModeServer sops ->
       server sops

@@ -18,14 +18,7 @@ data App = App
   { appLogFunc :: !LogFunc
   , appProcessContext :: !ProcessContext
   , appOptions :: !Options
-  , appMode :: !Mode
   -- Add other app-specific configuration information here
-  }
-
-data WorkerOptions = WorkerOptions
-  { _wopsHostUrl :: !String
-  , _wopsStoreUrl :: !String
-  , _wopsName :: !String
   }
 
 data ClientOptions = ClientOptions
@@ -45,28 +38,17 @@ data LocalStore = LocalStore
   }
 
 
-data Mode
-  = ModeServer !ServerOptions
-  | ModeClient !ClientOptions
-  | ModeWorker !WorkerOptions
-
-
 data OptionsWithApp a = OptionsWithApp
   { innerApp :: !App
   , extraOptions :: !a
   }
 
 type ClientApp = OptionsWithApp ClientOptions
-type WorkerApp = OptionsWithApp WorkerOptions
 
 makeClassy ''Options
-makeClassy ''WorkerOptions
 makeClassy ''ClientOptions
 makeClassy ''ServerOptions
 makeClassy ''LocalStore
-
-instance HasWorkerOptions WorkerApp where
-  workerOptions = lens extraOptions (\x y -> x { extraOptions = y })
 
 instance HasClientOptions ClientApp where
   clientOptions = lens extraOptions (\x y -> x { extraOptions = y })
@@ -94,10 +76,6 @@ instance HasLogFunc (OptionsWithApp env) where
 
 instance HasProcessContext (OptionsWithApp env) where
   processContextL = innerAppL . processContextL
-
-instance HasServerAccess WorkerApp where
-  serverPort = options . optionsPort
-  serverName = workerOptions . wopsHostUrl
 
 instance HasServerAccess ClientApp where
   serverPort = options . optionsPort

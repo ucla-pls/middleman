@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 module Worker where
 
 import Data.Either
@@ -15,8 +16,27 @@ import RIO.Directory
 import RIO.FilePath
 import RIO.Process
 
+import Data.ByteString.Lazy.Char8 as BS
+
+data WorkerOptions = WorkerOptions
+  { _wopsServerUrl :: !String
+  , _wopsStoreUrl :: !String
+  }
+
+makeClassy ''WorkerOptions
+
+type WorkerApp = OptionsWithApp WorkerOptions
+
+instance HasWorkerOptions WorkerApp where
+  workerOptions = lens extraOptions (\x y -> x { extraOptions = y })
+
+instance HasServerAccess WorkerApp where
+  serverPort = Import.options . optionsPort
+  serverName = workerOptions . wopsServerUrl
+
 worker :: WorkerOptions -> RIO App ()
 worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) . forever $ do
+  hostname <- getHostName
   handle
     (\a ->
         do
@@ -26,7 +46,7 @@ worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) . forever $ do
             _ -> throwIO a
     ) $
     bracketOnError
-      ( getWork (ops ^. wopsName) )
+      ( getWork hostname )
       reportFailureToServer
       ( maybe
         waitForInput
@@ -56,6 +76,14 @@ worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) . forever $ do
         <> " seconds."
       threadDelay (round (delay * 1e6))
 
+-- | Gets the hostname in the current system using this command
+getHostName ::
+  (HasProcessContext env, HasLogFunc env)
+  => RIO env String
+getHostName = do
+  s <- proc "hostname" [] $
+    readProcessStdout_
+  return (BS.unpack s)
 
 -- | Perform a job with derivation name
 performJob ::
@@ -114,6 +142,7 @@ getWork workerName = do
       wnd <- eitherDecode (r ^. responseBody)
       return ( Derivation (wndtoDerivation wnd), wndtoOutput wnd, wndtoWorkId wnd )
 
+-- | Report the result to the server
 reportResult ::
   (HasServerAccess env, MonadUnliftIO m, MonadReader env m)
   => Int64

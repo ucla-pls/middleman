@@ -30,7 +30,7 @@ main = do
 
       addCommand "start"
         "Start the server"
-        (ModeServer)
+        ModeServer
         (ServerOptions
          <$> switch (long "run-migration" <> short 'm' <> help "Run migration?")
          <*> option auto (long "sqlite" <> showDefault <> value "middleman.sqlite" <> help "Sqlite connection string")
@@ -42,7 +42,7 @@ main = do
 
       addCommand "work"
         "Try to get work on the server"
-        (ModeWorker)
+        ModeWorker
         (WorkerOptions
           <$> option str
             (long "server" <> value "localhost" <> showDefault
@@ -51,10 +51,6 @@ main = do
           <*> option str
             (long "store" <> value "file:///nix/store" <> showDefault
              <> help "The connection string of the store"
-            )
-          <*> option str
-            (long "name" <> value "nobody" <> showDefault
-             <> help "The name of the worker"
             )
         )
 
@@ -81,6 +77,5 @@ main = do
           { appLogFunc = lf
           , appProcessContext = pc
           , appOptions = options_
-          , appMode = mode
           }
-     in runRIO app run
+     in runRIO app $ run mode
