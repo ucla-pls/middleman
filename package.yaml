@@ -46,6 +46,7 @@ dependencies:
 - http-client
 - unliftio
 - containers
+- sysinfo >= 0.1.1
 
 ghc-options:
 - -Wall

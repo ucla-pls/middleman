@@ -56,6 +56,10 @@ main = do
             (short 'j' <> long "job" <> value 1 <> showDefault
              <> help "The max number of job to use in parallel"
             )
+          <*> option (Just <$> auto)
+            (long "free" <> value Nothing
+             <> help "Minimum required free memory"
+            )
         )
 
       addCommand "push"

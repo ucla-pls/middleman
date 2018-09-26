@@ -3,14 +3,11 @@ module Worker where
 
 import Data.Either
 import Data.Maybe
+import qualified Data.List as List
 
 import Data.Aeson
 import Data.Success
 
-import Import hiding ((<.>))
-import Nix
-import DTOs
-import ServerAccess
 
 import RIO.Directory
 import RIO.FilePath
@@ -18,10 +15,21 @@ import RIO.Process
 
 import Data.ByteString.Lazy.Char8 as BS
 
+-- sysinfo
+import System.SysInfo
+
+-- middleman
+import Control.Concurrent.Pool
+import Import hiding ((<.>))
+import Nix
+import DTOs
+import ServerAccess
+
 data WorkerOptions = WorkerOptions
   { _wopsServerUrl :: !String
   , _wopsStoreUrl :: !String
   , _wopsMaxJobs :: !Int
+  , _wopsFreeMemory :: !(Maybe (Int, Int))
   }
 
 makeClassy ''WorkerOptions
@@ -36,23 +44,36 @@ instance HasServerAccess WorkerApp where
   serverName = workerOptions . wopsServerUrl
 
 worker :: WorkerOptions -> RIO App ()
-worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) . forever $ do
+worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) $ do
   hostname <- getHostName
-  handle
-    (\a ->
-        do
-          logError $ displayShow (a :: WorkerException)
-          case a of
-            JobExecutedWrong _ -> return ()
-            _ -> throwIO a
-    ) $
+
+  maxJobs <- view wopsMaxJobs
+  memory <- view wopsFreeMemory
+
+  let
+    regulators = case memory of
+      Just (freeFrom, freeTo) ->
+        let outOfMemoryRegulator = Regulator $ do
+              sys <- liftIO $ sysInfo
+              case fromIntegral . freeram <$> sys of
+                  Right free -> do
+                    let x = if (free > freeTo) then LT else if (free < freeFrom ) then GT else EQ
+                    logDebug $ "Running memory regulator, found free "
+                      <> displayShow free
+                      <> " is " <> displayShow x
+                      <> " in range " <> displayShow (freeFrom, freeTo)
+                    return x
+                  Left _ -> do
+                    logError "Cannot find sys"
+                    return EQ
+         in [ outOfMemoryRegulator ]
+      Nothing -> []
+
+  runPool (PoolSettings maxJobs regulators 5.0) $ \pool -> forever $ do
     bracketOnError
       ( getWork hostname )
       reportFailureToServer
-      ( maybe
-        waitForInput
-        computeAndCopyToServer
-      )
+      ( maybe waitForInput ( computeAndCopyToServer pool ) )
 
   where
     reportFailureToServer = \case
@@ -61,14 +82,16 @@ worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) . forever $ do
       Nothing ->
         return ()
 
-    computeAndCopyToServer (drv, output, workId) = do
-      res <- performJob drv output
-      case res of
-        Just path -> do
-          copyToStore (ops ^. wopsStoreUrl) [path]
-          reportResult workId Succeded
-        Nothing ->
-          reportResult workId Failed
+    computeAndCopyToServer pool (drv, output, workId) = do
+      dispatch pool $ do
+        (flip onException) (reportResult workId Retry) $ do
+          res <- performJob drv output
+          case res of
+            Just path -> do
+              copyToStore (ops ^. wopsStoreUrl) [path]
+              reportResult workId Succeded
+            Nothing ->
+              reportResult workId Failed
 
     waitForInput = do
       let delay :: Double = 1.0
@@ -84,7 +107,7 @@ getHostName ::
 getHostName = do
   s <- proc "hostname" [] $
     readProcessStdout_
-  return (BS.unpack s)
+  return $ List.head (Import.lines $ BS.unpack s)
 
 -- | Perform a job with derivation name
 performJob ::

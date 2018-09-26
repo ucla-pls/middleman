@@ -17,9 +17,9 @@ import           Data.Foldable
 import           UnliftIO
 import qualified Data.Set as Set
 
-data PoolSettings = PoolSettings
+data PoolSettings m = PoolSettings
   { maxJobs :: !Int
-  , regulators :: ![ Regulator ]
+  , regulators :: ![ Regulator m ]
   , regulateEvery :: !Seconds
   }
 
@@ -28,7 +28,7 @@ type Seconds = Rational
 -- | A regulator can kill or start new jobs. If the action returns
 -- LT, then it will kill active jobs, if it returns GT it will try to
 -- add more jobs to the limit of maxJobs.
-newtype Regulator = Regulator { runRegulator :: IO Ordering }
+newtype Regulator m = Regulator { runRegulator :: m Ordering }
 
 data PoolState m = PoolState
   { currentMaxJobs :: !(TVar Int)
@@ -37,14 +37,14 @@ data PoolState m = PoolState
   }
 
 
-newPoolStateSTM :: PoolSettings -> STM (PoolState m)
+newPoolStateSTM :: PoolSettings m -> STM (PoolState m)
 newPoolStateSTM (PoolSettings{..}) = do
   currentMaxJobs <- newTVar maxJobs
   currentWorkers <- newTVar Set.empty
   currentWaitingJobs <- newTChan
   return (PoolState {..})
 
-newPoolState :: MonadUnliftIO m => PoolSettings -> m (PoolState m)
+newPoolState :: MonadUnliftIO m => PoolSettings m -> m (PoolState m)
 newPoolState =
   atomically . newPoolStateSTM
 
@@ -126,7 +126,7 @@ runPoolManager (PoolState {..}) = do
 -- | Create an environment where we can run and kill jobs.
 runPool ::
   forall m a. (MonadUnliftIO m)
-  => PoolSettings
+  => PoolSettings m
   -> (PoolState m -> m a)
   -> m a
 runPool poolSettings@(PoolSettings {..}) run = do
@@ -138,7 +138,7 @@ runPool poolSettings@(PoolSettings {..}) run = do
     runRegulators :: PoolState m -> m ()
     runRegulators (PoolState {..}) = forever $ do
       liftIO $ threadDelay (floor (regulateEvery * 1e6))
-      cmp <- fold <$> mapM (liftIO . runRegulator) regulators
+      cmp <- fold <$> mapM runRegulator regulators
       case cmp of
         EQ ->
           return ()
