@@ -44,6 +44,8 @@ dependencies:
 - blaze-html
 - bytestring
 - http-client
+- unliftio
+- containers
 
 ghc-options:
 - -Wall

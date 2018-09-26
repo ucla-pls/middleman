@@ -52,6 +52,10 @@ main = do
             (long "store" <> value "file:///nix/store" <> showDefault
              <> help "The connection string of the store"
             )
+          <*> option auto
+            (short 'j' <> long "job" <> value 1 <> showDefault
+             <> help "The max number of job to use in parallel"
+            )
         )
 
       addCommand "push"

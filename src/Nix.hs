@@ -76,7 +76,11 @@ realizeDrv ::
   -> RIO env (Maybe [FilePath])
 realizeDrv drv root = do
   proc "nix-store"
-    ["-r", derivationInStore drv, "--add-root", root, "--indirect"]
+    [ "-j", "1"
+    , "-r", derivationInStore drv
+    , "--add-root", root
+    , "--indirect"
+    ]
     readProcessLines
 
 readDerivation ::

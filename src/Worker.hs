@@ -21,6 +21,7 @@ import Data.ByteString.Lazy.Char8 as BS
 data WorkerOptions = WorkerOptions
   { _wopsServerUrl :: !String
   , _wopsStoreUrl :: !String
+  , _wopsMaxJobs :: !Int
   }
 
 makeClassy ''WorkerOptions
