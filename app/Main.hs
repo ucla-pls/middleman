@@ -60,6 +60,11 @@ main = do
             (long "free" <> value Nothing
              <> help "Minimum required free memory"
             )
+          <*> option (auto)
+            (short 'r' <> long "regulate-time"
+             <> value 5.0 <> showDefault
+             <> help "Regulate the memory every time."
+            )
         )
 
       addCommand "push"

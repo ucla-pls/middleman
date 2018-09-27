@@ -30,6 +30,7 @@ data WorkerOptions = WorkerOptions
   , _wopsStoreUrl :: !String
   , _wopsMaxJobs :: !Int
   , _wopsFreeMemory :: !(Maybe (Int, Int))
+  , _wopsRegulateTime :: !Rational
   }
 
 makeClassy ''WorkerOptions
@@ -49,19 +50,20 @@ worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) $ do
 
   maxJobs <- view wopsMaxJobs
   memory <- view wopsFreeMemory
+  regulateTime <- view wopsRegulateTime
 
   let
     regulators = case memory of
-      Just (freeFrom, freeTo) ->
+      Just (freeLower, freeUpper) ->
         let outOfMemoryRegulator = Regulator $ do
               sys <- liftIO $ sysInfo
               case fromIntegral . freeram <$> sys of
                   Right free -> do
-                    let x = if (free > freeTo) then LT else if (free < freeFrom ) then GT else EQ
+                    let x = if free > freeUpper then GT else if free < freeLower then LT else EQ
                     logDebug $ "Running memory regulator, found free "
                       <> displayShow free
                       <> " is " <> displayShow x
-                      <> " in range " <> displayShow (freeFrom, freeTo)
+                      <> " in range " <> displayShow (freeLower, freeUpper)
                     return x
                   Left _ -> do
                     logError "Cannot find sys"
@@ -69,7 +71,7 @@ worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) $ do
          in [ outOfMemoryRegulator ]
       Nothing -> []
 
-  runPool (PoolSettings maxJobs regulators 5.0) $ \pool -> forever $ do
+  runPool (PoolSettings maxJobs regulators regulateTime) $ \pool -> forever $ do
     bracketOnError
       ( getWork hostname )
       reportFailureToServer
