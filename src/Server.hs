@@ -12,6 +12,9 @@ import           RIO.Directory
 import           RIO.FilePath              (takeFileName, (<.>), (</>))
 import           RIO.Process
 import qualified RIO.Text.Lazy             as TL
+import qualified RIO.Text                  as Text
+import qualified RIO.ByteString.Lazy            as BL
+
 import           Control.Monad.Trans.Except
 import           Network.HTTP.Types.Status
 import           Network.Socket.Internal   (SockAddr (..))
@@ -24,11 +27,14 @@ import           Control.Monad.Logger      (runNoLoggingT)
 import           Data.Pool
 import qualified Data.ByteString.Builder as BL
 
+import qualified Dhall
+
 import Data.Success
 
 import           DTOs
 import           Model
 import           Nix
+import           WebServer
 
 data ServerApp = ServerApp
   { _app :: App
@@ -238,58 +244,3 @@ api = do
           text msg
         Right job ->
           json job
-
--- * Helpers
-
--- | The webserver of the api
-webserver ::
-  (HasSqlPool env, HasLogFunc env, HasProcessContext env, HasLocalStore env)
-  => ScottyT TL.Text (RIO env) ()
-webserver = do
-  get "/index.html" $
-    blaze . template $ H.h1 "hello world"
-
-
-template :: H.Html -> H.Html
-template cont = H.docTypeHtml $ do
-  H.head $ do
-    H.link H.! A.href bootstrap_url H.! A.rel "stylesheet"
-
-  H.body $ do
-    H.div H.! A.class_ "container-fluid" $ do
-      H.div H.! A.class_ "row" $ do
-        H.nav H.! A.class_ "col-md-2 d-none d-md-block bg-light sidebar" $
-          H.a H.! A.class_ "navbar-brand col-sm-3 col-md-2 mr-0" H.! A.href "#" $ do
-            "middleman"
-        H.main H.! A.role "main" H.! A.class_ "col-md-9 ml-sm-auto col-lg-10 px-4" $
-          H.div H.! A.class_ "d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom" $ do
-          cont
-
-
-    H.script H.! A.src jquery_url $ return ()
-    H.script H.! A.src pooper_url $ return ()
-    H.script H.! A.src bootstrap_js_url $ return ()
-
-
-  where
-    bootstrap_url =
-      "https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css"
-      -- integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous">
-
-    jquery_url =
-      "https://code.jquery.com/jquery-3.3.1.slim.min.js"
-      -- <script src="" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
-
-    pooper_url =
-      "https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.3/umd/popper.min.js"
-      --    <script src="" integrity="sha384-ZMP7rVo3mIykV+2+9J3UJ46jBk0WLaUAdn689aCwoqbBJiSnjAK/l8WvCWPIPm49" crossorigin="anonymous"></script>
-
-    bootstrap_js_url =
-      "https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/js/bootstrap.min.js"
-      --    <script src="" integrity="sha384-ChfqqxuZUCnJSK3+MXmPNIyE6ZbWh2IMqE241rYiqJxyMiZ6OW/JmZQ5stwEULTy" crossorigin="anonymous"></script>
-
-
-blaze :: (ScottyError e, Monad m) => H.Html -> ActionT e m ()
-blaze h = do
-  setHeader "Content-Type" "text/html"
-  raw . BL.toLazyByteString $ renderHtmlBuilder h

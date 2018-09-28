@@ -3,6 +3,7 @@ module Data.Success where
 
 import Data.Maybe
 import Data.Int
+import Data.Ord
 import Data.Eq
 import Text.Show
 
@@ -13,7 +14,7 @@ data Success =
   Succeded
   | Failed
   | Retry
-  deriving (Show, Generic, Eq)
+  deriving (Show, Generic, Eq, Ord)
 
 toInt :: Success -> Int
 toInt = \case

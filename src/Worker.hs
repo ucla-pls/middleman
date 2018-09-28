@@ -1,29 +1,29 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Worker where
 
-import Data.Either
-import Data.Maybe
+import           Data.Either
 import qualified Data.List as List
+import           Data.Maybe
 
-import Data.Aeson
-import Data.Success
+import           Data.Aeson
+import           Data.Success
 
 
-import RIO.Directory
-import RIO.FilePath
-import RIO.Process
+import           RIO.Directory
+import           RIO.FilePath
+import           RIO.Process
 
-import Data.ByteString.Lazy.Char8 as BS
+import           Data.ByteString.Lazy.Char8 as BS
 
 -- sysinfo
-import System.SysInfo
+import           System.SysInfo
 
 -- middleman
-import Control.Concurrent.Pool
-import Import hiding ((<.>))
-import Nix
-import DTOs
-import ServerAccess
+import           Control.Concurrent.Pool
+import           Import hiding ((<.>))
+import           Nix
+import           DTOs
+import           ServerAccess
 
 data WorkerOptions = WorkerOptions
   { _wopsServerUrl :: !String
@@ -44,6 +44,29 @@ instance HasServerAccess WorkerApp where
   serverPort = Import.options . optionsPort
   serverName = workerOptions . wopsServerUrl
 
+mkRegulators ::
+  (MonadReader env m, MonadIO m, HasLogFunc env)
+  => Maybe (Int, Int)
+  -> [Regulator m]
+mkRegulators memory = case memory of
+  Just (freeLower, freeUpper) ->
+    let
+      outOfMemoryRegulator = Regulator $ do
+        sys <- liftIO $ sysInfo
+        case fromIntegral . freeram <$> sys of
+            Right free -> do
+              let x = if free > freeUpper then GT else if free < freeLower then LT else EQ
+              logDebug $ "Running memory regulator, found free "
+                <> displayShow free
+                <> " is " <> displayShow x
+                <> " in range " <> displayShow (freeLower, freeUpper)
+              return x
+            Left _ -> do
+              logError "Cannot find sys"
+              return EQ
+    in [ outOfMemoryRegulator ]
+  Nothing -> []
+
 worker :: WorkerOptions -> RIO App ()
 worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) $ do
   hostname <- getHostName
@@ -52,30 +75,12 @@ worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) $ do
   memory <- view wopsFreeMemory
   regulateTime <- view wopsRegulateTime
 
-  let
-    regulators = case memory of
-      Just (freeLower, freeUpper) ->
-        let outOfMemoryRegulator = Regulator $ do
-              sys <- liftIO $ sysInfo
-              case fromIntegral . freeram <$> sys of
-                  Right free -> do
-                    let x = if free > freeUpper then GT else if free < freeLower then LT else EQ
-                    logDebug $ "Running memory regulator, found free "
-                      <> displayShow free
-                      <> " is " <> displayShow x
-                      <> " in range " <> displayShow (freeLower, freeUpper)
-                    return x
-                  Left _ -> do
-                    logError "Cannot find sys"
-                    return EQ
-         in [ outOfMemoryRegulator ]
-      Nothing -> []
-
-  runPool (PoolSettings maxJobs regulators regulateTime) $ \pool -> forever $ do
-    bracketOnError
-      ( getWork hostname )
-      reportFailureToServer
-      ( maybe waitForInput ( computeAndCopyToServer pool ) )
+  runPool (PoolSettings maxJobs (mkRegulators memory) regulateTime) $ \pool -> forever $ do
+    handle (\(e :: WorkerException) -> logError (displayShow e) >> threadDelay (seconds 10)) $ do
+      bracketOnError
+        ( getWork hostname )
+        reportFailureToServer
+        ( maybe waitForInput ( computeAndCopyToServer pool ) )
 
   where
     reportFailureToServer = \case
@@ -120,7 +125,8 @@ performJob ::
   -- ^ Expected output path
   -> RIO env (Maybe FilePath)
 performJob drv output = do
-  succ <- realizeDrv drv "here"
+  threadId <- myThreadId
+  succ <- realizeDrv drv ("middleman-link/" ++ show threadId)
   case succ of
     Just fps ->
       case fps of
@@ -200,3 +206,7 @@ instance Show WorkerException where
       "Job executed wrong:" ++ show str
 
 instance Exception WorkerException
+
+seconds :: Double -> Int
+seconds a =
+  floor (a * 1e6)

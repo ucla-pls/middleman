@@ -43,7 +43,7 @@ main = do
       addCommand "work"
         "Try to get work on the server"
         ModeWorker
-        (WorkerOptions
+        ( WorkerOptions
           <$> option str
             (long "server" <> value "localhost" <> showDefault
              <> help "The url of the server"
@@ -61,10 +61,10 @@ main = do
              <> help "Minimum required free memory"
             )
           <*> ( toRational <$> option (auto)
-               (short 'r' <> long "regulate-time"
-                 <> value (5.0 :: Double) <> showDefault
-                 <> help "Regulate the memory every time."
-               )
+                ( short 'r' <> long "regulate-time"
+                  <> value (5.0 :: Double) <> showDefault
+                  <> help "Regulate the memory every time."
+                )
               )
         )
 

@@ -47,6 +47,7 @@ dependencies:
 - unliftio
 - containers
 - sysinfo >= 0.1.1
+- dhall >= 1.15.1
 
 ghc-options:
 - -Wall
