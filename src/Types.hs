@@ -6,7 +6,6 @@ import RIO.Process
 
 import Control.Lens
 
-import ServerAccess hiding (Options, options)
 
 -- | Command line arguments
 data Options = Options
@@ -19,12 +18,6 @@ data App = App
   , appProcessContext :: !ProcessContext
   , appOptions :: !Options
   -- Add other app-specific configuration information here
-  }
-
-data ClientOptions = ClientOptions
-  { _copsHostUrl :: !String
-  , _copsStoreUrl :: !String
-  , _copsDrv :: !String
   }
 
 data ServerOptions = ServerOptions
@@ -43,15 +36,9 @@ data OptionsWithApp a = OptionsWithApp
   , extraOptions :: !a
   }
 
-type ClientApp = OptionsWithApp ClientOptions
-
 makeClassy ''Options
-makeClassy ''ClientOptions
 makeClassy ''ServerOptions
 makeClassy ''LocalStore
-
-instance HasClientOptions ClientApp where
-  clientOptions = lens extraOptions (\x y -> x { extraOptions = y })
 
 instance HasOptions App where
   options = lens appOptions (\x y -> x { appOptions = y })
@@ -76,8 +63,3 @@ instance HasLogFunc (OptionsWithApp env) where
 
 instance HasProcessContext (OptionsWithApp env) where
   processContextL = innerAppL . processContextL
-
-instance HasServerAccess ClientApp where
-  serverPort = options . optionsPort
-  serverName = clientOptions . copsHostUrl
-

@@ -28,7 +28,7 @@ import Data.Success
 
 -- | The webserver of the api
 webserver ::
-  (HasSqlPool env, HasLogFunc env, HasProcessContext env)
+  (HasSqlPool env)
   => ScottyT TL.Text (RIO env) ()
 webserver = do
   get "/" $ do
@@ -58,25 +58,21 @@ instance Dhall.Inject FrontPage
 
 data MWorker = MWorker
   { hostname :: Text
+  , workerActiveJobs :: Natural
   } deriving (Generic, Show)
 
 instance Dhall.Inject MWorker
 
 
-
 frontpage :: (ScottyError e, HasSqlPool env) => ActionT e (RIO env) ()
 frontpage = do
-  -- (done, running, total) <- lift . runDB $ do
-    -- total <- DB.count ([] :: [DB.Filter Job])
-    -- worked <- DB.count [ JobWorkId DB.!=. Nothing ]
-    -- done <- DB.count [ JobOutput DB.!=. Nothing, JobWorkId DB.!=. Nothing]
-    -- return (done, 0, done)
   (total, succeded, failed, running) <- lift . runDB $ do
     total <- DB.count ([] :: [DB.Filter Job])
-    jobs :: [(E.Value (Maybe Success), E.Value (Int))] <- E.select $ E.from $ \(job `E.InnerJoin` work) -> do
-      E.on (job E.^. JobWorkId E.==. E.just (work E.^. WorkId))
-      E.groupBy ( work E.^. WorkSuccess)
-      return (work E.^. WorkSuccess, E.countRows)
+    jobs :: [(E.Value (Maybe Success), E.Value (Int))] <-
+      E.select $ E.from $ \(job `E.InnerJoin` work) -> do
+        E.on (job E.^. JobWorkId E.==. E.just (work E.^. WorkId))
+        E.groupBy ( work E.^. WorkSuccess)
+        return (work E.^. WorkSuccess, E.countRows)
 
     let sucCount = foldMap (\(E.Value x, E.Value y) -> Map.singleton x y) jobs
 
@@ -87,12 +83,15 @@ frontpage = do
      , Map.findWithDefault 0 Nothing         sucCount
      )
 
-
   workers <- lift . runDB $ do
-    DB.selectList [] []
+    E.select $ E.from $ \(worker `E.InnerJoin` work ) -> do
+      E.on (worker E.^. WorkerId E.==. work E.^. WorkWorkerId)
+      E.where_ (E.isNothing $ work E.^. WorkCompleted )
+      E.groupBy (worker E.^. WorkerId)
+      return (worker, E.countRows)
 
-  let aj =
-        ActiveJobs
+  let
+    aj = ActiveJobs
          (fromIntegral succeded)
          (fromIntegral failed)
          (fromIntegral running)
@@ -101,10 +100,14 @@ frontpage = do
          (fromIntegral failed / fromIntegral total * 100)
          (fromIntegral running / fromIntegral total * 100)
 
-  serveFile "frontpage.dhall" Dhall.auto $ \f ->
-    f (FrontPage aj (map (MWorker . Text.pack . workerHostname . DB.entityVal) workers))
+    mworkers :: [MWorker]
+    mworkers =
+      map (\(worker, E.Value count) ->
+              (MWorker (Text.pack . workerHostname . DB.entityVal $ worker ) count)
+              ) workers
 
-newtype Record = Record ()
+  serveFile "frontpage.dhall" Dhall.auto $ \f ->
+    f (FrontPage aj mworkers)
 
 
 templateHtml :: (ScottyError e, MonadIO m) => Text -> ActionT e m ()
@@ -131,7 +134,7 @@ fromFile fp tp =
 template :: Text -> IO Text
 template txt = do
   withCurrentDirectory "templates" $ do
-    let file = "index.dhall"
-    fs <- readFileUtf8 file
-    temp <- Dhall.inputFrom file Dhall.auto fs :: IO (Text -> Text)
+    let fn = "index.dhall"
+    fs <- readFileUtf8 fn
+    temp <- Dhall.inputFrom fn Dhall.auto fs :: IO (Text -> Text)
     return $ temp txt

@@ -80,8 +80,12 @@ main = do
             (long "store" <> value "file:///nix/store" <> showDefault
              <> help "The connection string of the store"
             )
-          <*> argument str
-            (metavar "drv" <> help "The derivation to upload to the server")
+          <*> option str
+            (long "group" <> value "base" <> showDefault
+             <> help "The connection string of the store"
+            )
+          <*> some ( argument str ( metavar "drv" <> help "The derivation to upload to the server")
+            )
         )
 
   lo <- logOptionsHandle stderr (view optionsVerbose options_)

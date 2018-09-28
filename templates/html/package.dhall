@@ -20,6 +20,9 @@ in
 , h3_   = xml "h3" na
 , h4   = xml "h4"
 , h4_   = xml "h4" na
+, h5   = xml "h5"
+, h5_   = xml "h5" na
+, small_   = xml "small" na
 , div  = xml "div"
 , link = xml "link"
 , script = \(a: List ./Attr) -> xml "script" a ([] : List Text)
@@ -27,6 +30,7 @@ in
 , meta = \(a: List ./Attr) -> xml "meta" a ([] : List Text)
 
 , a = xml "a"
+, small = xml "small"
 , ul = xml "ul"
 , p = xml "p"
 , p_ = xml "p" na

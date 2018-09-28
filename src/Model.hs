@@ -108,7 +108,8 @@ startWork ::
   -> Worker
   -> ReaderT env m (Entity Work)
 startWork t jid worker = do
-  wid <- either entityKey id <$> insertBy worker
+  wid <- entityKey <$>
+    upsert worker [ WorkerHostname =. workerHostname worker]
   insertEntity (Work wid jid t Nothing Nothing)
 
 markWorkAsCompleted ::

@@ -76,9 +76,9 @@ worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) $ do
   regulateTime <- view wopsRegulateTime
 
   runPool (PoolSettings maxJobs (mkRegulators memory) regulateTime) $ \pool -> forever $ do
-    handle (\(e :: WorkerException) -> logError (displayShow e) >> threadDelay (seconds 10)) $ do
+    handle (\(e :: WorkerException) -> logError (displayShow e) >> waitForInput ) $ do
       bracketOnError
-        ( getWork hostname )
+        ( waitForActivePool pool >> getWork hostname )
         reportFailureToServer
         ( maybe waitForInput ( computeAndCopyToServer pool ) )
 
@@ -101,11 +101,9 @@ worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) $ do
               reportResult workId Failed
 
     waitForInput = do
-      let delay :: Double = 1.0
-      logDebug $ "No more work.. waiting for "
-        <> display delay
-        <> " seconds."
-      threadDelay (round (delay * 1e6))
+      let delay = 10.0
+      logDebug $ "No more work.. waiting for " <> display delay <> " seconds."
+      threadDelay (seconds delay)
 
 -- | Gets the hostname in the current system using this command
 getHostName ::

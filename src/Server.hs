@@ -12,22 +12,15 @@ import           RIO.Directory
 import           RIO.FilePath              (takeFileName, (<.>), (</>))
 import           RIO.Process
 import qualified RIO.Text.Lazy             as TL
-import qualified RIO.Text                  as Text
-import qualified RIO.ByteString.Lazy            as BL
 
 import           Control.Monad.Trans.Except
 import           Network.HTTP.Types.Status
 import           Network.Socket.Internal   (SockAddr (..))
 import           Network.Wai
 import           Web.Scotty.Trans
-import qualified Text.Blaze.Html5 as H
-import qualified Text.Blaze.Html5.Attributes as A
-import           Text.Blaze.Html.Renderer.Utf8 (renderHtmlBuilder)
 import           Control.Monad.Logger      (runNoLoggingT)
 import           Data.Pool
-import qualified Data.ByteString.Builder as BL
 
-import qualified Dhall
 
 import Data.Success
 

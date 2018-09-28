@@ -5,6 +5,7 @@ module Control.Concurrent.Pool
   , dispatch
   , runPool
   , waitForPool
+  , waitForActivePool
   ) where
 
 -- base
@@ -53,6 +54,15 @@ cleanupPoolState ps = do
   workers <- atomically $ readTVar (currentWorkers ps)
   mapM_ uninterruptibleCancel workers
 
+
+waitForActivePool ::
+  MonadUnliftIO m
+  => PoolState m
+  -> m ()
+waitForActivePool (PoolState {..}) = do
+  atomically $ do
+    isEmptyTChan currentWaitingJobs >>= guard
+
 dispatch :: MonadUnliftIO m =>
   (PoolState m)
   -> m ()
@@ -63,9 +73,7 @@ dispatch ps@(PoolState{..}) work = do
     writeTChan currentWaitingJobs work
 
   -- Ensure that request have been processed, if the pool is blocked, this will block
-  atomically $ do
-    guard =<< isEmptyTChan currentWaitingJobs
-
+  waitForActivePool ps
 
 waitForPool ::
   MonadUnliftIO m
