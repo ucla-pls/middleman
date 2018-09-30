@@ -42,6 +42,7 @@ dependencies:
 - mtl
 - transformers
 - blaze-html
+- async >= 2.2.1
 - bytestring
 - http-client
 - unliftio
