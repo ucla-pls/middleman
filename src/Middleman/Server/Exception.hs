@@ -24,6 +24,7 @@ data MiddlemanServerException
   = DatabaseException MiddlemanDatabaseException
   | NixException Nix.NixException
   | SomeOtherException SomeException
+  | InvalidInput String
   deriving (Show, Typeable)
 
 instance Exception MiddlemanServerException

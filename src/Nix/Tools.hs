@@ -58,17 +58,18 @@ copyToStore store fps = do
 
 readDerivationOutput ::
   (HasLogFunc env, HasProcessContext env, MonadReader env m, MonadIO m)
-  => FilePath
-  -> m (Maybe FilePath)
+  => Derivation
+  -> m FilePath
 readDerivationOutput p = do
+  let path = inStore p
   x :: Maybe Value <-
-    proc "nix" ["show-derivation", p] $ readProcessJSON
+    proc "nix" ["show-derivation", path] $ readProcessJSON
   let output =
-        x ^? traverse . key (Text.pack p)
+        x ^? traverse . key (Text.pack path)
            . key "outputs" . key "out" . key "path" . _JSON
   case output of
     Just filepath -> return filepath
-    Nothing -> throwIO $ InvalidDerivation p
+    Nothing -> throwIO $ InvalidDerivation path
 
 realizeDerivation ::
   (HasLogFunc env, HasProcessContext env, MonadReader env m, MonadIO m)
@@ -102,6 +103,14 @@ ensureGCRoot ::
   -> FilePath
   -> m ()
 ensureGCRoot _ _ = do
+  r <- view gcRootL
+  undefined
+
+validateLink ::
+  (HasGCRoot env, MonadReader env m, MonadIO m)
+  => FilePath
+  -> m ()
+validateLink _ = do
   r <- view gcRootL
   undefined
 

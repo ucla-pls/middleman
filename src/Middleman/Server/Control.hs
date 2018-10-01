@@ -18,6 +18,8 @@ module Middleman.Server.Control
 -- rio
 import RIO
 import RIO.FilePath
+import RIO.Process
+import RIO.Time (getCurrentTime)
 
 -- middleman
 import Middleman.Server.Exception
@@ -31,6 +33,8 @@ type Server m a =
   ( MonadReader env m
   , Nix.HasGCRoot env
   , DB.HasSqlPool env
+  , HasLogFunc env
+  , HasProcessContext env
   , MonadUnliftIO m
   ) => m a
 
@@ -52,74 +56,73 @@ deleteGroup groupId = do
     Nix.removeGCRoot ( relativeLinkOfJob jobDesc )
   DB.inDB ( DB.recursivelyDeleteGroup groupId )
 
--- -- | There can only be one job description, per derivation. You will
--- -- have to delete any old job descriptions to re-run.
--- submitJobDescription ::
---   (Monad m)
---   => JobDescription
---   -> m JobDescription
--- submitJobDescription desc = do
---   jobDesc <- DB.createJobDescription desc
---   Nix.ensureGCRoot ( relativeLinkOfJobDescription desc ) drv
---   return jobDesc
+-- | There can only be one job description, per derivation. You will
+-- have to delete any old job descriptions to re-run.
+submitJobDescription ::
+  DB.JobDescription -> Server m (DB.Entity DB.JobDescription)
+submitJobDescription desc = do
+  Nix.ensureGCRoot
+    ( relativeLinkOfJobDescription desc )
+    ( Nix.inStore . Derivation $ DB.jobDescriptionDerivation desc )
+  jobDesc <- DB.inDB ( DB.createJobDescription desc )
+  return jobDesc
 
--- publishJob ::
---   (Monad m)
---   => JobDescriptionId
---   -> m Job
--- publishJob descId = do
---   desc <- DB.findJobDescription descId
+publishJob ::
+  DB.JobDescriptionId -> Server m (DB.Entity DB.Job)
+publishJob descId = do
+  desc <- DB.inDB ( DB.findJobDescription descId )
 
---   -- Validation
---   handleNix $ Nix.validateLink ( relativeLinkOfJobDescription desc )
+  -- Validation
+  handleNix $ Nix.validateLink ( relativeLinkOfJobDescription desc )
 
---   -- Output link definition
---   output <- handleNix $ Nix.readDerivationOutput ( jobDerivation desc )
---   Nix.ensureGCRoot ( relativeLinkOfJob desc ) output
+  -- Output link definition
+  output <- handleNix $
+    Nix.readDerivationOutput
+    ( Derivation $ DB.jobDescriptionDerivation desc )
+  Nix.ensureGCRoot ( relativeLinkOfJob desc ) output
 
---   -- Creation
---   DB.createJob descId output
+  -- Creation
+  DB.inDB ( DB.createJob (DB.Job descId Nothing output) )
 
--- -- * Work Creation
+-- * Work Creation
 
--- -- | Create or update a worker.
--- upsertWorker ::
---   (Monad m)
---   => WorkerName
---   -> IpAdress
---   -> m (DB.Entity Worker)
--- upsertWorker name ipaddress = do
---   worker <- DB.upsertWorker (Worker name ipadress)
---   return worker
+-- | Create or update a worker.
+upsertWorker ::
+  DB.Worker -> Server m (DB.Entity DB.Worker)
+upsertWorker worker = do
+  DB.inDB ( DB.upsertWorker worker )
 
--- -- | Given a WorkerId create work
--- findWork ::
---   (Monad m)
---   => WorkerId
---   -> m (Maybe WorkDescription)
--- findWork workerId = do
---   timt <- getCurrentTime
---   (workId, jobDesc, group) <- DB.createWorkWithWorker time workerId
---   return $ WorkDescription
---     { workId = workId
---     , derivation = jobDerivation jobDesc
---     , timeout = groupTimeout group
---     }
+-- | Given a WorkerId create work
+startWork ::
+  DB.WorkerId -> Server m (Maybe (DB.Entity DB.Work))
+startWork workerId = do
+  time <- getCurrentTime
+  DB.inDB ( DB.startWorkOnAvailableJob time workerId )
 
--- -- | Complete work
--- finishWork ::
---   (Monad m)
---   => WorkId
---   -> Success
---   -> m ()
--- finishWork workId succ = do
---   (work, jobDesc) <- DB.findJobFromWork workId
+-- | Given a `DB.WorkId` find the neseary information to compute it.
+getWorkDescription ::
+  DB.WorkId -> Server m (DB.Entity DB.Work, DB.Entity DB.JobDescription, DB.Entity DB.Group)
+getWorkDescription workId =
+  DB.inDB ( DB.findWorkDescription workId )
 
---   when (succ == Succeded) $ do
---     -- Validation
---     handleNix $ Nix.validateLink ( relativeLinkOfJob desc )
+-- | Complete work
+finishWork ::
+  DB.WorkId -> DB.Result -> Server m ()
+finishWork workId result = do
+  ((DB.entityVal -> work), (DB.entityVal -> desc), _) <-
+    getWorkDescription workId
 
---   DB.finishWork time workId
+  let (start, end) = (DB.workStarted work, DB.resultEnded result)
+  when (start >= end) $
+    throwIO . InvalidInput $
+      "The end time should be later than the start time: "
+      ++ show start ++ " >= " ++ show end
+
+  when (DB.resultSuccess result == DB.Succeded) $ do
+    -- Validation
+    handleNix $ Nix.validateLink ( relativeLinkOfJob desc )
+
+  DB.inDB ( DB.finishWorkWithResult workId result )
 
 -- -- ** Others
 
