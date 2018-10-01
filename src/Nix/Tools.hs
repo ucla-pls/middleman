@@ -20,11 +20,15 @@ import Text.Show
 import Data.Aeson
 import Data.Aeson.Lens (_JSON, key)
 
+-- unix
+import           System.Posix.Files        (createSymbolicLink, readSymbolicLink)
+
 -- rio
 import RIO
 import qualified RIO.Text as Text
 import RIO.Process
 import RIO.FilePath
+import RIO.Directory
 import qualified RIO.ByteString.Lazy as BL
 
 
@@ -93,35 +97,51 @@ removeGCRoot ::
   (HasGCRoot env, MonadReader env m, MonadIO m)
   => FilePath
   -> m ()
-removeGCRoot _ = do
-  r <- view gcRootL
-  undefined
+removeGCRoot name = do
+  gcroot <- view gcRootL
+  liftIO $ removeFile (gcroot </> name) `onException` return ()
 
 ensureGCRoot ::
   (HasGCRoot env, MonadReader env m, MonadIO m)
   => FilePath
   -> FilePath
   -> m ()
-ensureGCRoot _ _ = do
-  r <- view gcRootL
-  undefined
+ensureGCRoot storepath name = do
+  gcroot <- view gcRootL
+  liftIO $ forceCreateSymbolicLink
+    ("/nix/store" </> storepath)
+    (gcroot </> name)
+  where
+    forceCreateSymbolicLink dest src = do
+      onException (createSymbolicLink dest src) $ do
+        onException ( guard . (== dest) =<< readSymbolicLink src ) $ do
+          removeFile src
+          createSymbolicLink dest src
 
 validateLink ::
   (HasGCRoot env, MonadReader env m, MonadIO m)
   => FilePath
   -> m ()
-validateLink _ = do
-  r <- view gcRootL
-  undefined
+validateLink name = do
+  gcroot <- view gcRootL
+  let file = (gcroot </> name)
+  link <- handleIO (throwIO . InvalidGCRoot file . show ) $ do
+    liftIO $ readSymbolicLink file
+
+  linkExits <- liftIO $ doesPathExist link
+  when (not linkExits) $ do
+    throwIO $ InvalidGCRoot file ("Link does not exits: " ++ link)
 
 -- * Exception
 
 data NixException
   = CouldNotCopyToStore !Store
   | InvalidDerivation !FilePath
-  deriving (Show, Typeable)
+  | InvalidGCRoot !FilePath String
+  deriving (Typeable)
 
 instance Exception NixException
+deriving instance (Show NixException)
 
 -- * Util
 

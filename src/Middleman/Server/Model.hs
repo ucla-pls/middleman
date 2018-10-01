@@ -13,6 +13,7 @@ Description : The model used on the server
 -}
 module Middleman.Server.Model
   ( inDB
+  , migrateDB
 
   -- * Group
   , Group (..)
@@ -65,7 +66,6 @@ import Data.Pool
 
 -- rio
 import RIO hiding ((^.), on)
-import RIO.Text
 import RIO.Time
 
 
@@ -82,7 +82,7 @@ import           Middleman.Server.Model.Extra
 
 share
   [ mkPersist sqlSettings
-  , mkDeleteCascade sqlOnlySettings
+  , mkDeleteCascade sqlSettings
   , mkMigrate "migrateAll"]
   [persistLowerCase|
   Group json
@@ -138,6 +138,10 @@ inDB f = do
   p <- view dbSqlPool
   runSqlPool f p
 
+migrateDB :: DB ()
+migrateDB =
+  runMigration migrateAll
+
 createGroup ::
   Group -> DB (Entity Group)
 createGroup grp = do
@@ -157,8 +161,8 @@ recursivelyDeleteGroup groupId =
 
 createJobDescription ::
   JobDescription -> DB (Entity JobDescription)
-createJobDescription desc =
-  P.insertUniqueEntity desc `orFail` ItemAlreadyExists desc
+createJobDescription jobDesc =
+  P.insertUniqueEntity jobDesc `orFail` ItemAlreadyExists jobDesc
 
 findJobDescription ::
   JobDescriptionId -> DB JobDescription
