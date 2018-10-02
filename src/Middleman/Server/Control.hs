@@ -40,6 +40,18 @@ type Server m a =
 
 -- * Job Creation
 
+-- | List Groups
+listGroups ::
+  Server m [DB.Entity DB.Group]
+listGroups = do
+  DB.inDB ( DB.listGroups )
+
+-- | Find Groups
+findGroup ::
+  DB.GroupId -> Server m (Maybe (DB.Entity DB.Group))
+findGroup groupId = do
+  DB.inDB ( DB.findGroup groupId )
+
 -- | Create a group of jobs
 createGroup ::
   DB.Group -> Server m (DB.Entity DB.Group)
@@ -62,15 +74,21 @@ submitJobDescription ::
   DB.JobDescription -> Server m (DB.Entity DB.JobDescription)
 submitJobDescription desc = do
   Nix.ensureGCRoot
-    ( relativeLinkOfJobDescription desc )
     ( Nix.inStore . Derivation $ DB.jobDescriptionDerivation desc )
+    ( relativeLinkOfJobDescription desc )
   jobDesc <- DB.inDB ( DB.createJobDescription desc )
   return jobDesc
+
+findJobDescription ::
+  DB.JobDescriptionId -> Server m (Maybe (DB.Entity DB.JobDescription))
+findJobDescription descId =
+  DB.inDB ( DB.findJobDescription descId )
 
 publishJob ::
   DB.JobDescriptionId -> Server m (DB.Entity DB.Job)
 publishJob descId = do
-  desc <- DB.inDB ( DB.findJobDescription descId )
+  (DB.entityVal -> desc) <- findJobDescription descId
+    `orFail` ItemNotFoundException descId
 
   -- Validation
   handleNix $ Nix.validateLink ( relativeLinkOfJobDescription desc )
@@ -83,6 +101,11 @@ publishJob descId = do
 
   -- Creation
   DB.inDB ( DB.createJob (DB.Job descId Nothing output) )
+
+listJobs ::
+  Server m [DB.Entity DB.Job]
+listJobs = do
+  DB.inDB ( DB.listJobs )
 
 -- * Work Creation
 
@@ -100,19 +123,21 @@ startWork workerId = do
   DB.inDB ( DB.startWorkOnAvailableJob time workerId )
 
 -- | Given a `DB.WorkId` find the neseary information to compute it.
-getWorkDescription ::
-  DB.WorkId -> Server m (DB.Entity DB.Work, DB.Entity DB.JobDescription, DB.Entity DB.Group)
-getWorkDescription workId =
-  DB.inDB ( DB.findWorkDescription workId )
+findWorkDetails ::
+  DB.WorkId -> Server m (Maybe DB.WorkDetails)
+findWorkDetails workId = do
+  DB.inDB ( DB.findWorkDetails workId )
 
 -- | Complete work
 finishWork ::
-  DB.WorkId -> DB.Result -> Server m ()
-finishWork workId result = do
-  ((DB.entityVal -> work), (DB.entityVal -> desc), _) <-
-    getWorkDescription workId
+  DB.WorkId -> DB.Success -> Server m ()
+finishWork workId success = do
+  time <- getCurrentTime
+  let result = DB.Result time success
 
-  let (start, end) = (DB.workStarted work, DB.resultEnded result)
+  w <- findWorkDetails workId `orFail` ItemNotFoundException workId
+
+  let (start, end) = (DB.workDetailsStarted w, DB.resultEnded result)
   when (start >= end) $
     throwIO . InvalidInput $
       "The end time should be later than the start time: "
@@ -120,9 +145,15 @@ finishWork workId result = do
 
   when (DB.resultSuccess result == DB.Succeded) $ do
     -- Validation
-    handleNix $ Nix.validateLink ( relativeLinkOfJob desc )
+    handleNix $ Nix.validateLink
+      ( relativeLinkOfJob (DB.entityVal (DB.workDetailsJobDescription w)))
 
   DB.inDB ( DB.finishWorkWithResult workId result )
+
+listWork ::
+  Server m [DB.Entity DB.Work]
+listWork =
+  DB.inDB DB.listWork
 
 -- -- ** Others
 

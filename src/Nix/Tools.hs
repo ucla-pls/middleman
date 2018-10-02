@@ -113,20 +113,21 @@ ensureGCRoot storepath name = do
     (gcroot </> name)
   where
     forceCreateSymbolicLink dest src = do
-      onException (createSymbolicLink dest src) $ do
-        onException ( guard . (== dest) =<< readSymbolicLink src ) $ do
+      catchAny (createSymbolicLink dest src) $ \_ -> do
+        catchAny ( guard . (== dest) =<< readSymbolicLink src ) $ \_ -> do
           removeFile src
           createSymbolicLink dest src
 
 validateLink ::
-  (HasGCRoot env, MonadReader env m, MonadIO m)
+  (HasGCRoot env, MonadReader env m, MonadUnliftIO m)
   => FilePath
   -> m ()
 validateLink name = do
   gcroot <- view gcRootL
   let file = (gcroot </> name)
-  link <- handleIO (throwIO . InvalidGCRoot file . show ) $ do
-    liftIO $ readSymbolicLink file
+  link <- liftIO $ do
+    handleIO (throwIO . InvalidGCRoot file . show ) $ do
+      readSymbolicLink file
 
   linkExits <- liftIO $ doesPathExist link
   when (not linkExits) $ do

@@ -32,14 +32,16 @@ main = do
         "Start the server"
         ModeServer
         (ServerOptions
-         <$> switch (long "run-migration" <> short 'm' <> help "Run migration?")
-         <*> option auto (long "sqlite" <> showDefault <> value "middleman.sqlite" <> help "Sqlite connection string")
-         <*> (
-            LocalStore <$>
-              option str (long "gc-root" <> help "The directory to place the gc-roots")
-            )
+         <$> switch
+         (long "run-migration" <> short 'm' <> help "Run migration?")
+         <*> option auto
+         (long "postgresql" <> showDefault
+          <> value "user=middleman password=middleman port=5432 connect_timeout=10"
+          <> help "Postgresql connection string")
+         <*> option str
+         (long "gc-root"
+          <> help "The directory to place the gc-roots")
         )
-
       addCommand "work"
         "Try to get work on the server"
         ModeWorker

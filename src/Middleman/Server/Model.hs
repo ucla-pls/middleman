@@ -19,6 +19,8 @@ module Middleman.Server.Model
   , Group (..)
   , GroupId
   , createGroup
+  , listGroups
+  , findGroup
   , recursivelyDeleteGroup
 
   -- * JobDescription
@@ -32,6 +34,7 @@ module Middleman.Server.Model
   , Job (..)
   , JobId
   , createJob
+  , listJobs
 
   -- * Worker
   , Worker (..)
@@ -43,8 +46,11 @@ module Middleman.Server.Model
   , WorkId
   , createWork
   , startWorkOnAvailableJob
-  , findWorkDescription
   , finishWorkWithResult
+  , listWork
+
+  , WorkDetails (..)
+  , findWorkDetails
 
   -- * Result
   , Result (..)
@@ -57,7 +63,7 @@ module Middleman.Server.Model
   , HasSqlPool (..)
 
   -- * Re-exports
-  , Entity (..)
+  , module P
   )
   where
 
@@ -76,9 +82,13 @@ import           Database.Persist.TH
 -- esqueleto
 import Database.Esqueleto
 
+-- aeson
+import Data.Aeson.TH
+
 -- middleman
 import           Middleman.Server.Exception
 import           Middleman.Server.Model.Extra
+import TH
 
 share
   [ mkPersist sqlSettings
@@ -138,14 +148,26 @@ inDB f = do
   p <- view dbSqlPool
   runSqlPool f p
 
-migrateDB :: DB ()
+migrateDB ::
+  (MonadUnliftIO m, MonadReader env m, HasSqlPool env)
+  => m ()
 migrateDB =
-  runMigration migrateAll
+  inDB ( runMigration migrateAll )
 
 createGroup ::
   Group -> DB (Entity Group)
 createGroup grp = do
   P.insertUniqueEntity grp `orFail` ItemAlreadyExists grp
+
+listGroups ::
+  DB [Entity Group]
+listGroups = do
+  P.selectList [] [ P.Asc GroupName ]
+
+findGroup ::
+  GroupId -> DB (Maybe (Entity Group))
+findGroup groupId = do
+  P.getEntity groupId
 
 jobDescriptionsWithGroup ::
   GroupId -> DB [Entity JobDescription]
@@ -165,14 +187,19 @@ createJobDescription jobDesc =
   P.insertUniqueEntity jobDesc `orFail` ItemAlreadyExists jobDesc
 
 findJobDescription ::
-  JobDescriptionId -> DB JobDescription
+  JobDescriptionId -> DB (Maybe (Entity JobDescription))
 findJobDescription jobDId =
-  P.get jobDId `orFail` ItemNotFoundException jobDId
+  P.getEntity jobDId
 
 createJob ::
   Job -> DB (Entity Job)
 createJob job =
   P.insertUniqueEntity job `orFail` ItemAlreadyExists job
+
+listJobs ::
+  DB [Entity Job]
+listJobs = do
+  P.selectList [] []
 
 upsertWorker ::
   Worker -> DB (Entity Worker)
@@ -197,9 +224,21 @@ startWorkOnAvailableJob  workStarted workWorkerId = do
     Nothing -> do
       return Nothing
 
-findWorkDescription ::
-  WorkId -> DB (Entity Work, Entity JobDescription, Entity Group)
-findWorkDescription workId = do
+data WorkDetails =
+  WorkDetails
+  { workDetailsId :: !WorkId
+  , workDetailsStarted :: !UTCTime
+  , workDetailsWorkerId :: !WorkerId
+  , workDetailsJobDescription :: !(Entity JobDescription)
+  , workDetailsGroup :: !(Entity Group)
+  , workDetailsResult :: !(Maybe Result)
+  } deriving (Show, Generic)
+
+deriveJSON (def 11) ''WorkDetails
+
+findWorkDetails ::
+  WorkId -> DB ( Maybe WorkDetails )
+findWorkDetails workId = do
   lst <- select $ from $ \(
     work `InnerJoin` job `InnerJoin` jobd `InnerJoin` grp) -> do
     on (jobd ^. JobDescriptionGroupId ==. grp ^. GroupId)
@@ -207,20 +246,43 @@ findWorkDescription workId = do
     on (work ^. WorkJobId ==. job ^. JobId )
     where_ ( work ^. WorkId ==. val workId)
     return (work, jobd, grp)
+
   case lst of
-    (e:_) -> return e
-    _ -> throwIO $ ItemNotFoundException workId
+    ((entityVal -> work, jobd, grp):_) -> do
+      result <- case workResultId work of
+        Just rid -> P.get rid
+        Nothing -> return $ Nothing
+      return . Just $ WorkDetails
+        { workDetailsId = workId
+        , workDetailsStarted = workStarted work
+        , workDetailsWorkerId = workWorkerId work
+        , workDetailsJobDescription = jobd
+        , workDetailsGroup = grp
+        , workDetailsResult = result
+        }
+    _ -> return Nothing
 
 -- | Finishes Work with Result. Do not over-write the previous results.
 finishWorkWithResult ::
   WorkId -> Result -> DB ()
 finishWorkWithResult workId result= do
+  work <- P.get workId `orFail` ItemNotFoundException workId
+
+  when (workResultId work /= Nothing) $ do
+    throwIO $ ItemAlreadyExists work
+
   resultId <- P.insert result
+
   P.updateWhere
     [ WorkId P.==. workId, WorkResultId P.==. Nothing ]
     [ WorkResultId P.=. Just resultId ]
 
-  when (resultSuccess result /= Succeded) $ do
+  when (resultSuccess result == Retry) $ do
     P.updateWhere
       [ JobWorkId P.==. Just workId ]
       [ JobWorkId P.=. Nothing ]
+
+listWork ::
+  DB [Entity Work]
+listWork = do
+  P.selectList [] [ P.Asc WorkStarted ]

@@ -20,16 +20,10 @@ data App = App
   -- Add other app-specific configuration information here
   }
 
-data ServerOptions = ServerOptions
-  { _sopsRunMigration :: !Bool
-  , _sopsConnectionString :: !Text
-  , _sopsLocalStore :: !LocalStore
-  }
 
 data LocalStore = LocalStore
   { _storeGCRoot :: !String
   }
-
 
 data OptionsWithApp a = OptionsWithApp
   { innerApp :: !App
@@ -37,7 +31,6 @@ data OptionsWithApp a = OptionsWithApp
   }
 
 makeClassy ''Options
-makeClassy ''ServerOptions
 makeClassy ''LocalStore
 
 instance HasOptions App where

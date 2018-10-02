@@ -1,33 +1,49 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Server (server) where
+module Server (server, ServerOptions(..)) where
 
-import           Import                    hiding ((<.>))
-
-import           Database.Persist.Sql      (Entity, SqlBackend, toSqlKey)
-import qualified Database.Persist.Sql      as DB
-import           Database.Persist.Sqlite   (withSqlitePool)
-import           System.Posix.Files        (createSymbolicLink, readSymbolicLink)
-import           RIO.Directory
-import           RIO.FilePath              (takeFileName, (<.>), (</>))
-import           RIO.Process
-import qualified RIO.Text.Lazy             as TL
 
 import           Control.Monad.Trans.Except
+
+-- wai?
 import           Network.HTTP.Types.Status
 import           Network.Socket.Internal   (SockAddr (..))
 import           Network.Wai
+
+-- scotty
 import           Web.Scotty.Trans
-import           Control.Monad.Logger      (runNoLoggingT)
+
+-- base
 import           Data.Pool
 
+-- monad-logger
+import           Control.Monad.Logger      (runNoLoggingT)
 
-import Data.Success
+-- persist-postgresql
+import           Database.Persist.Postgresql   (withPostgresqlPool, SqlBackend)
 
-import           DTOs
-import           Model
-import           Nix
+-- rio
+import RIO.Process
+import qualified RIO.Text.Lazy as TL
+import qualified RIO.Text as Text
+
+-- middleman
+import           Import                    hiding ((<.>))
 import           WebServer
+
+import Nix.Tools (HasGCRoot(..))
+
+import Middleman.Server.Control
+import Middleman.Server.Exception
+import Middleman.DTO as DTO
+import Middleman.Server.Model (HasSqlPool(..), migrateDB, Entity(..))
+
+data ServerOptions = ServerOptions
+  { _sopsRunMigration :: !Bool
+  , _sopsConnectionString :: !Text
+  , _sopsGCRoot :: !FilePath
+  }
+makeClassy ''ServerOptions
 
 data ServerApp = ServerApp
   { _app :: App
@@ -42,6 +58,9 @@ instance HasOptions ServerApp where
 instance HasServerOptions ServerApp where
   serverOptions = sOptions
 
+instance HasGCRoot ServerApp where
+  gcRootL = serverOptions . sopsGCRoot
+
 instance HasLogFunc ServerApp where
   logFuncL = app . logFuncL
 
@@ -51,189 +70,125 @@ instance HasSqlPool ServerApp where
 instance HasProcessContext ServerApp where
   processContextL = app . processContextL
 
-instance HasLocalStore ServerApp where
-  localStore = serverOptions . sopsLocalStore
-
 server ::
   ServerOptions
   -> RIO App ()
 server ops = ask >>= \a ->
   runNoLoggingT
-  . withSqlitePool (ops ^. sopsConnectionString) 10
+  . withPostgresqlPool (Text.encodeUtf8 $ ops ^. sopsConnectionString) 10
   $ \pool -> runRIO (ServerApp a ops pool) $ do
     b <- view sopsRunMigration
-    when b $ migrateDB
+    when b migrateDB
 
     port <- view optionsPort
     logInfo $ "Starting server at " <> display port
     env <- ask
     scottyT port (runRIO env) serverDescription
 
--- | Creates a new job on the server
-createNewJob ::
-  (HasSqlPool env, HasLogFunc env, HasLocalStore env)
-  => String
-  -> String
-  -> RIO env (Entity Job)
-createNewJob drv group = do
-  logDebug $ "Create new work at " <> displayShow drv <> " with group " <> displayShow group
-  e <- makeJob drv group
-  storeCreateGCRoot drv (drv <.> "drv")
-  return $ e
-
--- | Publish a job
-publishJob ::
-  (HasSqlPool env, HasLogFunc env, HasLocalStore env, HasProcessContext env)
-  => JobId
-  -> RIO env (Either TL.Text (Entity Job))
-publishJob key = runExceptT $ do
-  logDebug $ "Publishing work " <> displayShow key
-  jm <- lift . runDB $ DB.get key
-  case jm of
-    Just job -> do
-      let
-        drv = jobDerivation job
-        path = "/nix/store" </> drv <.> "drv"
-      moutput <- readDerivationOutput path
-      case takeFileName <$> moutput of
-        Just output -> lift $ do
-          storeCreateGCRoot (drv ++ "-output") output
-          let job' = job { jobOutput = Just output }
-          runDB $ DB.repsert key job'
-          return $ DB.Entity key job'
-        Nothing -> do
-          fail $ "Could not read derivation: " ++ show path
-    Nothing ->
-      fail $ "Key not found: " ++ show key
-
--- | Create new work and return the job
-findNewWork ::
-  (HasSqlPool env, HasLogFunc env)
-  => Worker
-  -> RIO env (Maybe (Entity Job))
-findNewWork worker = do
-  logDebug $ "Find work with worker " <> displayShow worker
-  getSomeJobWithNewWork worker
-
--- | Mark the work as done
-finishWork ::
-  (HasSqlPool env, HasLogFunc env)
-  => WorkId
-  -> Success
-  -> RIO env (Either TL.Text (Entity Work))
-finishWork wid succ = runExceptT $ do
-
-  logDebug $ "Finish work " <> displayShow wid <> " with status " <> displayShow succ
-
-  w <- maybe (throwE "Could not find work.") return
-    =<< (lift . runDB $ DB.get wid)
-
-  j <- maybe (throwE "Work does not point to a valid job") return
-    =<< (lift . runDB $ DB.get (workJobId w))
-
-  output <- maybe (throwE "Job does not have a valid output path.") return $
-    jobOutput j
-
-  when (succ == Succeded) $ do
-    found <- doesPathExist $ "/nix/store" </> output
-    when (not found) $
-      throwE . utf8BuilderToLazyText $
-        "Did not find " <> displayShow (jobOutput j) <> " in the store."
-
-  work <- lift $ markWorkAsCompleted wid succ
-
-  maybe (throwE "Unexpected error") return $ work
-
-
-storeCreateGCRoot ::
-  (HasLogFunc env, HasLocalStore env, MonadUnliftIO m, MonadReader env m)
-  => String
-  -> String
-  -> m ()
-storeCreateGCRoot name storepath = do
-  gcroot <- view storeGCRoot
-  let
-    srcf = (gcroot </> name)
-    dest = ("/nix/store" </> storepath)
-  logDebug $ "Creating GCRoot " <> displayShow srcf <> " -> " <> displayShow dest <> "."
-  catchIO (liftIO $ createSymbolicLink dest srcf) $ \e -> do
-    logDebug "Could not create symbolic link:"
-    logDebug $ displayShow e
-    f <- catchIO (liftIO $ Just <$> readSymbolicLink srcf) . const $ return Nothing
-    logDebug $ "The symbolic link points to " <> displayShow f
-    when (f /= Just dest) $ do
-      logDebug $ "So we delete it a try again"
-      liftIO $ do
-        removeFile srcf
-        createSymbolicLink dest srcf
-
 serverDescription ::
-  (HasSqlPool env, HasLogFunc env, HasProcessContext env, HasLocalStore env)
+  (HasSqlPool env, HasGCRoot env, HasLogFunc env, HasProcessContext env )
   => ScottyT TL.Text (RIO env) ()
 serverDescription = do
   api
-  webserver
-
+  -- webserver
 
 -- | The api of the server
 api ::
-  (HasSqlPool env, HasLogFunc env, HasProcessContext env, HasLocalStore env)
+ (HasSqlPool env, HasGCRoot env, HasLogFunc env, HasProcessContext env)
   => ScottyT TL.Text (RIO env) ()
 api = do
-    get "/api/jobs" $ do
-      unworked <- param "unworked" `rescue` (const $ pure False)
-      x <- lift $
-        if unworked
-        then getUnworkedJobs
-        else getJobs
-      json x
+  get "/api" $ do
+    json $ Info
+      { infoStoreAddress = "localhost"
+      }
 
-    post "/api/jobs" $ do
-      NewJobDTO path group <- jsonData
-      job' <- lift $ createNewJob path group
-      status created201
-      json job'
+  get "/api/groups/" $ do
+    grps <- lift $ listGroups
+    json grps
 
-    put "/api/jobs/:id/publish" $ do
-      key <- toSqlKey <$> param "id"
-      ejob <- lift $ publishJob key
-      case ejob of
-        Left msg -> do
-          status badRequest400
-          text msg
-        Right job ->
-          json job
+  post "/api/groups/" $ do
+    group <- jsonData
+    result <- lift . try $ createGroup group
+    case result of
+      Left (ItemAlreadyExists grp) -> do
+        status badRequest400
+        text ("Group already exist " <> tShow grp)
+        finish
+      Right entity ->
+        json entity
+      Left e -> raise (tShow e)
 
-    post "/api/work" $ do
-      req <- request
-      WorkRequestDTO name <- jsonData
-      case remoteHost req of
-        SockAddrInet _ host -> do
-          mjob <- lift $ findNewWork (Worker name host)
-          case mjob of
-            Just (DB.Entity _ job) -> do
-              let mdto = do
-                   let wndtoDerivation = jobDerivation job
-                   wndtoOutput <- jobOutput job
-                   wndtoWorkId <- DB.fromSqlKey <$> jobWorkId job
-                   return $ WorkNeededDTO {..}
-              case mdto of
-                Just dto -> do
-                  status created201
-                  json dto
-                Nothing -> do
-                  fail $ "Something went wrong"
-            Nothing ->
-              status noContent204
-        _ -> do
-          status $ badRequest400 { statusMessage = "Needs to connect with an IPv6 address"}
+  get "/api/groups/:id" $ do
+    key <- param "id"
+    findOrFail $ findGroup key
 
-    put "/api/work/:id/success" $ do
-      key <- toSqlKey <$> param "id"
-      WorkSuccededDTO succ <- jsonData
-      lift (finishWork key succ) >>= \case
-        Left msg -> do
-          status badRequest400
-          text msg
-        Right job ->
-          json job
+  delete "/api/groups/:groupId" $ do
+    groupId <- param "groupId"
+    lift $ deleteGroup groupId
+    status ok200
+
+  post "/api/job-descriptions/" $ do
+    desc <- jsonData
+    result <- lift . try $ submitJobDescription desc
+    case result of
+      Left (ItemAlreadyExists grp) -> do
+        status badRequest400
+        text ("Job description already exist: " <> tShow grp)
+        finish
+      Right entity ->
+        json entity
+      Left e -> raise (tShow e)
+
+  get "/api/job-descriptions/:id" $ do
+    jobDescId <- param "id"
+    findOrFail ( findJobDescription jobDescId )
+
+  post "/api/job-descriptions/:id/publish" $ do
+    jobDescId <- param "id"
+    json =<< lift ( publishJob jobDescId )
+
+  get "/api/jobs/" $ do
+    json =<< lift ( listJobs )
+
+  post "/api/worker/" $ do
+    name <- jsonData
+    req <- request
+    case remoteHost req of
+      SockAddrInet _ ipaddress -> do
+        json =<< lift ( upsertWorker $ Worker name ipaddress )
+      _ -> do
+        status badRequest400
+        text "Needs to connect with an IPv6 address"
+
+  post "/api/worker/:workerId/work" $ do
+    workerId <- param "workerId"
+    result <- lift ( startWork workerId )
+    case result of
+      Just (Entity workId _) -> do
+        lift (findWorkDetails workId) >>= \case
+          Nothing -> raise "Something went wrong"
+          Just wd -> json wd
+      Nothing ->
+        status status204
+
+  get "/api/work/" $ do
+    json =<< lift ( listWork )
+
+  get "/api/work/:workId" $ do
+    workId <- param "workId"
+    findOrFail (findWorkDetails workId)
+
+  post "/api/work/:workId/:succ" $ do
+    workId <- param "workId"
+    succ <- param "succ"
+    lift (finishWork workId succ)
+
+  where
+    findOrFail m =
+      lift m >>= \case
+        Just r -> json r
+        Nothing -> status notFound404
+
+
+tShow :: Show a => a -> TL.Text
+tShow = TL.pack . show
