@@ -2,18 +2,19 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Server (server, ServerOptions(..)) where
 
-
-import           Control.Monad.Trans.Except
-
 -- wai?
 import           Network.HTTP.Types.Status
 import           Network.Socket.Internal   (SockAddr (..))
 import           Network.Wai
 
+-- aseon
+import Data.Aeson (ToJSON)
+
 -- scotty
 import           Web.Scotty.Trans
 
--- base
+
+  -- base
 import           Data.Pool
 
 -- monad-logger
@@ -37,6 +38,8 @@ import Middleman.Server.Control
 import Middleman.Server.Exception
 import Middleman.DTO as DTO
 import Middleman.Server.Model (HasSqlPool(..), migrateDB, Entity(..))
+
+-- * ServerOptions
 
 data ServerOptions = ServerOptions
   { _sopsRunMigration :: !Bool
@@ -70,6 +73,9 @@ instance HasSqlPool ServerApp where
 instance HasProcessContext ServerApp where
   processContextL = app . processContextL
 
+
+-- * Server implementation
+
 server ::
   ServerOptions
   -> RIO App ()
@@ -92,16 +98,28 @@ serverDescription = do
   api
   -- webserver
 
--- | The api of the server
-api ::
+
+type API env =
  (HasSqlPool env, HasGCRoot env, HasLogFunc env, HasProcessContext env)
   => ScottyT TL.Text (RIO env) ()
+
+-- | The api of the server
+api :: API env
 api = do
   get "/api" $ do
     json $ Info
       { infoStoreAddress = "localhost"
       }
 
+  groupPaths
+  jobDescriptionPaths
+  jobPaths
+  workerPaths
+  workPaths
+
+
+groupPaths :: API env
+groupPaths = do
   get "/api/groups/" $ do
     grps <- lift $ listGroups
     json grps
@@ -127,6 +145,8 @@ api = do
     lift $ deleteGroup groupId
     status ok200
 
+jobDescriptionPaths :: API env
+jobDescriptionPaths = do
   post "/api/job-descriptions/" $ do
     desc <- jsonData
     result <- lift . try $ submitJobDescription desc
@@ -147,9 +167,14 @@ api = do
     jobDescId <- param "id"
     json =<< lift ( publishJob jobDescId )
 
+
+jobPaths :: API env
+jobPaths = do
   get "/api/jobs/" $ do
     json =<< lift ( listJobs )
 
+workerPaths :: API env
+workerPaths = do
   post "/api/worker/" $ do
     name <- jsonData
     req <- request
@@ -171,6 +196,9 @@ api = do
       Nothing ->
         status status204
 
+
+workPaths :: API env
+workPaths = do
   get "/api/work/" $ do
     json =<< lift ( listWork )
 
@@ -183,12 +211,18 @@ api = do
     succ <- param "succ"
     lift (finishWork workId succ)
 
-  where
-    findOrFail m =
-      lift m >>= \case
-        Just r -> json r
-        Nothing -> status notFound404
 
+
+-- * Utils
+
+findOrFail ::
+  (ToJSON a, Monad m, ScottyError e)
+  => m (Maybe a)
+  -> ActionT e m ()
+findOrFail m =
+  lift m >>= \case
+    Just r -> json r
+    Nothing -> status notFound404
 
 tShow :: Show a => a -> TL.Text
 tShow = TL.pack . show
