@@ -7,6 +7,9 @@ import           Network.HTTP.Types.Status
 import           Network.Socket.Internal   (SockAddr (..))
 import           Network.Wai
 
+-- wai-extra
+import qualified Network.Wai.Middleware.RequestLogger
+
 -- aseon
 import Data.Aeson (ToJSON)
 
@@ -95,6 +98,7 @@ serverDescription ::
   (HasSqlPool env, HasGCRoot env, HasLogFunc env, HasProcessContext env )
   => ScottyT TL.Text (RIO env) ()
 serverDescription = do
+  middleware (Network.Wai.Middleware.RequestLogger.logStdout)
   api
   -- webserver
 

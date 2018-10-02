@@ -33,6 +33,7 @@ dependencies:
 - http-types
 - network
 - wai
+- wai-extra
 - esqueleto
 - wreq
 - lens-aeson
