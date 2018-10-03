@@ -26,7 +26,7 @@ module Middleman.Server.Model
   -- * JobDescription
   , JobDescription (..)
   , JobDescriptionId
-  , createJobDescription
+  , upsertJobDescription
   , findJobDescription
   , jobDescriptionsWithGroup
   , listJobDescriptions
@@ -66,6 +66,7 @@ module Middleman.Server.Model
 
   -- * Re-exports
   , module P
+  , Derivation (..)
   )
   where
 
@@ -75,7 +76,6 @@ import Data.Pool
 -- rio
 import RIO hiding ((^.), on)
 import RIO.Time
-
 
 -- persist
 import qualified Database.Persist.Sql as P
@@ -89,6 +89,7 @@ import Data.Aeson.TH
 
 -- middleman
 import           Middleman.Server.Exception
+import           Nix.Tools (Derivation(..))
 import           Middleman.Server.Model.Extra
 import TH
 
@@ -104,10 +105,10 @@ share
     deriving Show Generic
 
   JobDescription json
-    derivation Text
+    derivation Derivation
     groupId GroupId
     UniqueJobDerivation derivation
-    deriving Show Generic
+    deriving Show Generic Eq
 
   Job json
     descId JobDescriptionId
@@ -184,10 +185,12 @@ recursivelyDeleteGroup ::
 recursivelyDeleteGroup groupId =
   P.delete groupId
 
-createJobDescription ::
-  JobDescription -> DB (Entity JobDescription)
-createJobDescription jobDesc =
-  P.insertUniqueEntity jobDesc `orFail` ItemAlreadyExists jobDesc
+-- | try to insert the job description into the database, if it already exist
+-- set the flag to null.
+upsertJobDescription ::
+  JobDescription -> DB (Bool, Entity JobDescription)
+upsertJobDescription jobDesc =
+  (\e -> (entityVal e == jobDesc , e)) <$> P.upsert jobDesc []
 
 findJobDescription ::
   JobDescriptionId -> DB (Maybe (Entity JobDescription))
@@ -205,9 +208,10 @@ createJob job =
   P.insertUniqueEntity job `orFail` ItemAlreadyExists job
 
 listJobs ::
-  DB [Entity Job]
-listJobs = do
-  P.selectList [] []
+  Maybe JobDescriptionId -> DB [Entity Job]
+listJobs q = do
+  let query = maybe [] (\jd -> [ JobDescId P.==. jd]) q
+  P.selectList query []
 
 listWorkers ::
   Maybe Text -> DB [Entity Worker]
@@ -300,3 +304,15 @@ listWork ::
   DB [Entity Work]
 listWork = do
   P.selectList [] [ P.Asc WorkStarted ]
+
+
+-- * Displays for easy handeling
+
+instance Display GroupId where
+  display i = "Group(" <> display (fromSqlKey i) <> ")"
+
+instance Display JobId where
+  display i = "Job(" <> display (fromSqlKey i) <> ")"
+
+instance Display JobDescriptionId where
+  display i = "JobDescriptionId(" <> display (fromSqlKey i) <> ")"

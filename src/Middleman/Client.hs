@@ -12,7 +12,10 @@ module Middleman.Client
   , getGroupWithName
 
   , postJobDescription
+  , postJobDescriptions
   , publishJobDescription
+
+  , getJobWithDescription
 
   -- * Rexports
   , HasServerAccess (..)
@@ -64,10 +67,21 @@ postJobDescription jd =
   post jd . expectCreated . json $
     "api" </> "job-descriptions" <?> []
 
+postJobDescriptions :: [JobDescription] -> Client [Entity JobDescription]
+postJobDescriptions jd =
+  post jd . expectOk . json $
+    "api" </> "job-descriptions" <?> []
+
 publishJobDescription :: JobDescriptionId -> Client (Entity Job)
 publishJobDescription jid =
   post () . expectCreated . json $
     "api" </> "job-descriptions" </> value jid </> "publish" <?> []
+
+getJobWithDescription :: JobDescriptionId -> Client (Maybe (Entity Job))
+getJobWithDescription jdid = do
+  lst <- get . expectOk . json $
+    "api" </> "jobs" <?> "desc" =. jdid
+  return (List.headMaybe lst)
 
 getWorker :: Text -> Client (Maybe (Entity Worker))
 getWorker name = do

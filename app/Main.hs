@@ -33,12 +33,13 @@ main = do
         "Start the server"
         ModeServer
         (ServerOptions
-         <$> switch
-         (long "run-migration" <> short 'm' <> help "Run migration?")
-         <*> option auto
+         <$> option auto
          (long "postgresql" <> showDefault
           <> value "user=middleman password=middleman port=5432 connect_timeout=10"
           <> help "Postgresql connection string")
+         <*> option str
+         (long "store-url" <> value "ssh://localhost"
+          <> help "The url to the store, should be pointing to the server itself")
          <*> option str
          (long "gc-root"
           <> help "The directory to place the gc-roots")

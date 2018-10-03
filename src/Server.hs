@@ -2,9 +2,22 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Server (server, ServerOptions(..)) where
 
--- wai?
+-- base
+import           Data.Pool
+
+-- rio
+import RIO.Process
+import RIO.List as List hiding (delete)
+import qualified RIO.ByteString.Lazy as BL
+import qualified RIO.Text.Lazy as TL
+import qualified RIO.Text as Text
+
+-- http-types
 import           Network.HTTP.Types.Status
+
 import           Network.Socket.Internal   (SockAddr (..))
+
+-- wai
 import           Network.Wai
 
 -- wai-extra
@@ -16,20 +29,12 @@ import Data.Aeson (ToJSON)
 -- scotty
 import           Web.Scotty.Trans
 
-  -- base
-import           Data.Pool
-
 -- monad-logger
 import           Control.Monad.Logger      (runNoLoggingT)
 
 -- persist-postgresql
 import           Database.Persist.Postgresql   (withPostgresqlPool, SqlBackend)
 
--- rio
-import RIO.Process
-import qualified RIO.ByteString.Lazy as BL
-import qualified RIO.Text.Lazy as TL
-import qualified RIO.Text as Text
 
 -- middleman
 import           Import                    hiding ((<.>))
@@ -45,8 +50,8 @@ import Middleman.Server.Model (HasSqlPool(..), migrateDB, Entity(..))
 -- * ServerOptions
 
 data ServerOptions = ServerOptions
-  { _sopsRunMigration :: !Bool
-  , _sopsConnectionString :: !Text
+  { _sopsConnectionString :: !Text
+  , _sopsStoreUrl :: !String
   , _sopsGCRoot :: !FilePath
   }
 makeClassy ''ServerOptions
@@ -96,24 +101,28 @@ server ops = ask >>= \a ->
         env <- ask
         scottyT port (runRIO env) serverDescription
 
-serverDescription ::
-  (HasSqlPool env, HasGCRoot env, HasLogFunc env, HasProcessContext env )
-  => ScottyT TL.Text (RIO env) ()
+serverDescription :: API env
 serverDescription = do
   middleware (Network.Wai.Middleware.RequestLogger.logStdout)
   api
   -- webserver
 
 type API env =
- (HasSqlPool env, HasGCRoot env, HasLogFunc env, HasProcessContext env)
+  ( HasSqlPool env
+  , HasGCRoot env
+  , HasLogFunc env
+  , HasServerOptions env
+  , HasProcessContext env)
   => ScottyT TL.Text (RIO env) ()
 
 -- | The api of the server
 api :: API env
 api = do
+
   get "/api" $ do
+    storeurl <- lift . view $ serverOptions . sopsStoreUrl
     json $ Info
-      { infoStoreUrl = "localhost"
+      { infoStoreUrl = storeurl
       }
 
   groupPaths
@@ -152,18 +161,22 @@ groupPaths = do
 
 jobDescriptionPaths :: API env
 jobDescriptionPaths = do
+
+  post "/api/job-descriptions/" $ do
+    descs :: [JobDescription] <- jsonData `rescue` const next
+    results <- forM descs $ \desc ->
+      fmap snd . lift $ submitJobDescription desc
+    json results
+
   post "/api/job-descriptions/" $ do
     desc <- jsonData
-    result <- lift . try $ submitJobDescription desc
-    case result of
-      Left (ItemAlreadyExists grp) -> do
-        status for
-        text ("Job description already exist: " <> tShow grp)
-        finish
-      Right entity -> do
-        status created201
-        json entity
-      Left e -> raise (tShow e)
+    (new, result) <- lift $ submitJobDescription desc
+    if new
+      then do
+      status created201
+      json result
+      else
+      status forbidden403
 
   get "/api/job-descriptions/" $ do
     json =<< lift listJobDescriptions
@@ -172,12 +185,19 @@ jobDescriptionPaths = do
     jobDescId <- param "id"
     findOrFail ( findJobDescription jobDescId )
 
+  get "/api/job-descriptions/:id/job" $ do
+    jobDescId <- param "id"
+    findOrFail ( List.headMaybe <$> listJobs (Just jobDescId) )
+
   post "/api/job-descriptions/:id/publish" $ do
     jobDescId <- param "id"
     result <- lift ( try $ publishJob jobDescId )
     case result of
       Left (DatabaseException e@(ItemNotFoundException _)) -> do
         status notFound404
+        text (TL.pack . show $ e)
+      Left (DatabaseException e@(ItemAlreadyExists _)) -> do
+        status badRequest400
         text (TL.pack . show $ e)
       Left (NixException e) -> do
         status badRequest400
@@ -192,7 +212,8 @@ jobDescriptionPaths = do
 jobPaths :: API env
 jobPaths = do
   get "/api/jobs/" $ do
-    json =<< lift ( listJobs )
+    desc <- maybeParam "desc"
+    json =<< lift ( listJobs desc )
 
 workersPaths :: API env
 workersPaths = do
@@ -221,7 +242,6 @@ workersPaths = do
       Nothing ->
         status status204
 
-
 workPaths :: API env
 workPaths = do
   get "/api/work/" $ do
@@ -235,7 +255,6 @@ workPaths = do
     workId <- param "workId"
     succ <- param "succ"
     lift (finishWork workId succ)
-
 
 
 -- * Utils

@@ -48,8 +48,6 @@ fromStorePath ::
 fromStorePath =
   Derivation . Text.pack . takeBaseName
 
-
-
 -- * Verification of nix.
 
 -- * Copy to the store
@@ -65,7 +63,7 @@ copyToStore ::
 copyToStore store fps = do
   ec <- proc "nix" (["copy", "--to", store] ++ fps) $ runSilentProcess
   when (ec /= ExitSuccess) $
-    throwIO $ CouldNotCopyToStore store
+    throwIO $ CouldNotCopyToStore store fps
 
 readDerivationOutput ::
   (HasLogFunc env, HasProcessContext env, MonadReader env m, MonadIO m)
@@ -143,7 +141,7 @@ validateLink name = do
 -- * Exception
 
 data NixException
-  = CouldNotCopyToStore !Store
+  = CouldNotCopyToStore !Store ![FilePath]
   | InvalidDerivation !FilePath
   | InvalidGCRoot !FilePath String
   deriving (Typeable)

@@ -75,12 +75,12 @@ deleteGroup groupId = do
 -- | There can only be one job description, per derivation. You will
 -- have to delete any old job descriptions to re-run.
 submitJobDescription ::
-  DB.JobDescription -> Server m (DB.Entity DB.JobDescription)
+  DB.JobDescription -> Server m (Bool, DB.Entity DB.JobDescription)
 submitJobDescription desc = do
   Nix.ensureGCRoot
-    ( Nix.inStore . Derivation $ DB.jobDescriptionDerivation desc )
+    ( Nix.inStore $ DB.jobDescriptionDerivation desc )
     ( relativeLinkOfJobDescription desc )
-  jobDesc <- DB.inDB ( DB.createJobDescription desc )
+  jobDesc <- DB.inDB ( DB.upsertJobDescription desc )
   return jobDesc
 
 findJobDescription ::
@@ -105,16 +105,17 @@ publishJob descId = do
   -- Output link definition
   output <- handleNix $
     Nix.readDerivationOutput
-    ( Derivation $ DB.jobDescriptionDerivation desc )
+    ( DB.jobDescriptionDerivation desc )
   Nix.ensureGCRoot ( relativeLinkOfJob desc ) output
 
   -- Creation
   DB.inDB ( DB.createJob (DB.Job descId Nothing output) )
 
 listJobs ::
-  Server m [DB.Entity DB.Job]
-listJobs = do
-  DB.inDB ( DB.listJobs )
+  Maybe DB.JobDescriptionId
+  -> Server m [DB.Entity DB.Job]
+listJobs q = do
+  DB.inDB ( DB.listJobs q )
 
 -- * Work Creation
 
@@ -175,8 +176,7 @@ relativeLinkOfJobDescription ::
   DB.JobDescription -> FilePath
 relativeLinkOfJobDescription desc =
   RIO.FilePath.takeFileName
-    ( Nix.inStore
-      ( Derivation $ DB.jobDescriptionDerivation desc) )
+    ( Nix.inStore ( DB.jobDescriptionDerivation desc ) )
 
 relativeLinkOfJob ::
   DB.JobDescription -> FilePath

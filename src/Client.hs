@@ -44,47 +44,63 @@ pushApp = do
   groupName <- view copsGroup
 
   info <- Client.getInfo
+  groupId <- fetchGroupName groupName
 
-  groupId <- Client.getGroupWithName groupName >>= \case
-    Just grp ->
-      return (entityKey grp)
-    Nothing ->
-      fail $ "Group with name " ++ show groupName ++ "does not exist."
+  let descriptions =
+        List.map (flip JobDescription groupId)
+        derivations
 
-  forM_ derivations $ \drv -> do
-    jkey <- entityKey <$> postJobDescription
-      (JobDescription (Nix.derivationName drv) groupId )
+  logDebug "Ensure job descriptions exist on the server..."
 
-    Nix.copyToStore (infoStoreUrl info) [Nix.inStore drv]
+  results <- postJobDescriptions descriptions
 
-    publishJobDescription jkey
+  uploads <-
+    filterM removeConflictingDerivation
+    ( List.zipWith compareResults results descriptions )
 
--- client ::
---   ClientOptions
---   -> RIO App ()
--- client ops = ask >>= \app -> runRIO (OptionsWithApp app ops) $ do
---   forM_ (ops ^.. copsDrvs . folded . to (\d -> (d, takeBaseName d))) $ \(drv, name) -> do
+  if (List.null uploads)
+    then logInfo "No jobs needs uploading..."
+    else do
+      logInfo $
+        "Copy " <> display (List.length uploads) <> " jobs to the server..."
 
---     r <- post "api/jobs" . toJSON $ NewJobDTO name (ops^.copsGroup)
+      Nix.copyToStore (infoStoreUrl info)
+        . List.map (\(_, _, desc) -> Nix.inStore $ jobDescriptionDerivation desc)
+        $ uploads
 
---     case (r ^. responseStatus . statusCode, r ^? responseBody . key "id" . _JSON) of
---       (201, Just (i :: Int)) -> do
---         logInfo $ "Created new job @ " <> displayShow i
+      forM_ uploads $ \(jkey, _, desc) -> do
+        publishJobDescription jkey
+        logInfo $
+          "Done uploading "
+          <> displayShow (jobDescriptionDerivation desc)
+          <> " : " <> display jkey
+  where
+    removeConflictingDerivation (key, isSame, desc) = do
+      let JobDescription drv groupId = desc
+      if not isSame
+        then do
+        logDebug $ "Derivation "
+          <> displayShow drv
+          <> " exist with other group "
+          <> display groupId
+        return False
+        else do
+        getJobWithDescription key >>= \case
+          Just job -> do
+            logDebug $ "Derivation "
+              <> displayShow drv
+              <> " already have a job "
+              <> display (entityKey job)
+            return False
+          Nothing ->
+            return True
 
---         logInfo $ "Copying the derivation to the store"
---         copyToStore (ops ^. copsStoreUrl) [drv]
---         logInfo $ "Done"
+    compareResults (Entity key val) desc =
+      (key, val == desc, desc)
 
---         r' <- put ("api/jobs/" ++ show i ++ "/publish") (toJSON True)
---         let s = r' ^. responseStatus
---         case s ^. statusCode of
---           200 ->
---             logInfo $ "Successfully published derivation"
---           sc ->
---             logError $ "Error publishing the derivation expected 200, got: "
---               <> display sc <> ": "
---               <> displayBytesUtf8 (s ^. statusMessage)
-
---       (x, a) ->
---         logError $ "Got " <> displayShow a <> " from the server and " <> display x <> ": " <>
---           displayBytesUtf8 (r^.responseStatus.statusMessage)
+    fetchGroupName groupName = do
+      Client.getGroupWithName groupName >>= \case
+        Just grp ->
+          return (entityKey grp)
+        Nothing ->
+          fail $ "Group with name " ++ show groupName ++ "does not exist."

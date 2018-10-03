@@ -19,6 +19,10 @@ import Database.Persist.Sql
 
 -- aeson
 import Data.Aeson.TH
+import Data.Aeson
+
+-- middleman
+import Nix.Tools
 
 -- * Success
 
@@ -56,3 +60,19 @@ instance PersistField Success where
 
 instance PersistFieldSql Success where
   sqlType _ = SqlInt32
+
+instance PersistField Derivation where
+  toPersistValue = PersistText . derivationName
+  fromPersistValue = \case
+    PersistText txt -> Right ( Derivation txt )
+    _ -> Left "Bad derivation expected text"
+
+instance PersistFieldSql Derivation where
+  sqlType _ = SqlString
+
+instance ToJSON Derivation where
+  toJSON = String . derivationName
+
+instance FromJSON Derivation where
+  parseJSON = withText "Derivation" $
+    return . Derivation
