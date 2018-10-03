@@ -152,9 +152,9 @@ inDB f = do
 
 migrateDB ::
   (MonadUnliftIO m, MonadReader env m, HasSqlPool env)
-  => m ()
+  => m [Text]
 migrateDB =
-  inDB ( runMigration migrateAll )
+  inDB ( getMigration migrateAll )
 
 createGroup ::
   Group -> DB (Entity Group)

@@ -16,7 +16,6 @@ import Data.Aeson (ToJSON)
 -- scotty
 import           Web.Scotty.Trans
 
-
   -- base
 import           Data.Pool
 
@@ -28,6 +27,7 @@ import           Database.Persist.Postgresql   (withPostgresqlPool, SqlBackend)
 
 -- rio
 import RIO.Process
+import qualified RIO.ByteString.Lazy as BL
 import qualified RIO.Text.Lazy as TL
 import qualified RIO.Text as Text
 
@@ -86,13 +86,15 @@ server ops = ask >>= \a ->
   runNoLoggingT
   . withPostgresqlPool (Text.encodeUtf8 $ ops ^. sopsConnectionString) 10
   $ \pool -> runRIO (ServerApp a ops pool) $ do
-    b <- view sopsRunMigration
-    when b migrateDB
-
-    port <- view optionsPort
-    logInfo $ "Starting server at " <> display port
-    env <- ask
-    scottyT port (runRIO env) serverDescription
+    m <- migrateDB
+    if (not $ null m)
+      then do
+        mapM_ (BL.putStrLn . BL.fromStrict . Text.encodeUtf8) m
+      else do
+        port <- view optionsPort
+        logInfo $ "Starting server at " <> display port
+        env <- ask
+        scottyT port (runRIO env) serverDescription
 
 serverDescription ::
   (HasSqlPool env, HasGCRoot env, HasLogFunc env, HasProcessContext env )
@@ -155,7 +157,7 @@ jobDescriptionPaths = do
     result <- lift . try $ submitJobDescription desc
     case result of
       Left (ItemAlreadyExists grp) -> do
-        status badRequest400
+        status for
         text ("Job description already exist: " <> tShow grp)
         finish
       Right entity -> do
