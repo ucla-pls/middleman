@@ -42,9 +42,9 @@ type Server m a =
 
 -- | List Groups
 listGroups ::
-  Server m [DB.Entity DB.Group]
-listGroups = do
-  DB.inDB ( DB.listGroups )
+  Maybe Text -> Server m [DB.Entity DB.Group]
+listGroups mname = do
+  DB.inDB ( DB.listGroups mname )
 
 -- | Find Groups
 findGroup ::
@@ -62,11 +62,15 @@ createGroup grp =
 deleteGroup ::
   DB.GroupId -> Server m ()
 deleteGroup groupId = do
+  logDebug $ "Deleting group " <> displayShow groupId
   jobs <- DB.inDB ( DB.jobDescriptionsWithGroup groupId)
   forM_ jobs $ \(DB.entityVal -> jobDesc) -> do
+    logDebug $ "Removing links from " <> displayShow jobDesc
     Nix.removeGCRoot ( relativeLinkOfJobDescription jobDesc )
     Nix.removeGCRoot ( relativeLinkOfJob jobDesc )
+  logDebug $ "Recursively deleting group"
   DB.inDB ( DB.recursivelyDeleteGroup groupId )
+  logDebug $ "done"
 
 -- | There can only be one job description, per derivation. You will
 -- have to delete any old job descriptions to re-run.
@@ -83,6 +87,11 @@ findJobDescription ::
   DB.JobDescriptionId -> Server m (Maybe (DB.Entity DB.JobDescription))
 findJobDescription descId =
   DB.inDB ( DB.findJobDescription descId )
+
+listJobDescriptions ::
+  Server m [DB.Entity DB.JobDescription]
+listJobDescriptions =
+  DB.inDB ( DB.listJobDescriptions )
 
 publishJob ::
   DB.JobDescriptionId -> Server m (DB.Entity DB.Job)
@@ -108,6 +117,11 @@ listJobs = do
   DB.inDB ( DB.listJobs )
 
 -- * Work Creation
+
+listWorkers ::
+  Maybe Text -> Server m [DB.Entity DB.Worker]
+listWorkers query =
+  DB.inDB ( DB.listWorkers query )
 
 -- | Create or update a worker.
 upsertWorker ::

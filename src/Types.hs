@@ -33,6 +33,9 @@ data OptionsWithApp a = OptionsWithApp
 makeClassy ''Options
 makeClassy ''LocalStore
 
+extraOptionsL :: Lens' (OptionsWithApp a) a
+extraOptionsL = lens extraOptions (\e s -> e { extraOptions = s })
+
 instance HasOptions App where
   options = lens appOptions (\x y -> x { appOptions = y })
 

@@ -29,6 +29,7 @@ module Middleman.Server.Model
   , createJobDescription
   , findJobDescription
   , jobDescriptionsWithGroup
+  , listJobDescriptions
 
   -- * Job
   , Job (..)
@@ -39,6 +40,7 @@ module Middleman.Server.Model
   -- * Worker
   , Worker (..)
   , WorkerId
+  , listWorkers
   , upsertWorker
 
   -- * Work
@@ -116,7 +118,7 @@ share
     deriving Show Generic
 
   Worker json
-    hostname String
+    name Text
     ipaddress Word32
     UniqueWorkerId ipaddress
     deriving Show Generic
@@ -160,9 +162,10 @@ createGroup grp = do
   P.insertUniqueEntity grp `orFail` ItemAlreadyExists grp
 
 listGroups ::
-  DB [Entity Group]
-listGroups = do
-  P.selectList [] [ P.Asc GroupName ]
+  Maybe Text -> DB [Entity Group]
+listGroups mname = do
+  let query = maybe [] (\name -> [ GroupName P.==. name ]) mname
+  P.selectList query [ P.Asc GroupName ]
 
 findGroup ::
   GroupId -> DB (Maybe (Entity Group))
@@ -179,7 +182,7 @@ jobDescriptionsWithGroup groupId =
 recursivelyDeleteGroup ::
   GroupId -> DB ()
 recursivelyDeleteGroup groupId =
-  deleteCascade groupId
+  P.delete groupId
 
 createJobDescription ::
   JobDescription -> DB (Entity JobDescription)
@@ -191,6 +194,11 @@ findJobDescription ::
 findJobDescription jobDId =
   P.getEntity jobDId
 
+listJobDescriptions ::
+  DB [ Entity JobDescription ]
+listJobDescriptions =
+  P.selectList [] []
+
 createJob ::
   Job -> DB (Entity Job)
 createJob job =
@@ -200,6 +208,12 @@ listJobs ::
   DB [Entity Job]
 listJobs = do
   P.selectList [] []
+
+listWorkers ::
+  Maybe Text -> DB [Entity Worker]
+listWorkers qt = do
+  let query = maybe [] (\name -> [ WorkerName P.==. name ]) qt
+  P.selectList query [ P.Asc WorkerName ]
 
 upsertWorker ::
   Worker -> DB (Entity Worker)

@@ -5,6 +5,7 @@ import Import hiding (argument)
 import Run
 import RIO.Process
 import Options.Applicative.Simple
+import Network.HTTP.Client.Helper hiding (value)
 import qualified Paths_middleman
 
 main :: IO ()
@@ -72,21 +73,18 @@ main = do
 
       addCommand "push"
         "Try to push a derivation onto the server"
-        ModeClient
-        ( ClientOptions
-          <$> option str
-            (long "server" <> value "localhost" <> showDefault
-             <> help "The url of the server"
-            )
-          <*> option str
-            (long "store" <> value "file:///nix/store" <> showDefault
-             <> help "The connection string of the store"
-            )
+        ModePush
+        ( PushOptions
+          <$> parseServer
           <*> option str
             (long "group" <> value "base" <> showDefault
              <> help "The connection string of the store"
             )
-          <*> some ( argument str ( metavar "drv" <> help "The derivation to upload to the server")
+          <*> some (
+            argument str (
+                metavar "drv"
+                <> help "The derivation to upload to the server"
+                )
             )
         )
 
@@ -99,3 +97,14 @@ main = do
           , appOptions = options_
           }
      in runRIO app $ run mode
+
+
+  where
+    parseServer =
+      Server
+      <$> option str
+      (long "server" <> value "localhost" <> showDefault
+        <> help "The url of the server")
+      <*> option auto
+      (long "port" <> value 3000 <> showDefault
+        <> help "The server port")

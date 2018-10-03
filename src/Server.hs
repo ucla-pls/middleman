@@ -102,7 +102,6 @@ serverDescription = do
   api
   -- webserver
 
-
 type API env =
  (HasSqlPool env, HasGCRoot env, HasLogFunc env, HasProcessContext env)
   => ScottyT TL.Text (RIO env) ()
@@ -112,20 +111,20 @@ api :: API env
 api = do
   get "/api" $ do
     json $ Info
-      { infoStoreAddress = "localhost"
+      { infoStoreUrl = "localhost"
       }
 
   groupPaths
   jobDescriptionPaths
   jobPaths
-  workerPaths
+  workersPaths
   workPaths
-
 
 groupPaths :: API env
 groupPaths = do
-  get "/api/groups/" $ do
-    grps <- lift $ listGroups
+  get "/api/groups" $ do
+    withName <- maybeParam "name"
+    grps <- lift $ listGroups withName
     json grps
 
   post "/api/groups/" $ do
@@ -159,9 +158,13 @@ jobDescriptionPaths = do
         status badRequest400
         text ("Job description already exist: " <> tShow grp)
         finish
-      Right entity ->
+      Right entity -> do
+        status created201
         json entity
       Left e -> raise (tShow e)
+
+  get "/api/job-descriptions/" $ do
+    json =<< lift listJobDescriptions
 
   get "/api/job-descriptions/:id" $ do
     jobDescId <- param "id"
@@ -169,7 +172,19 @@ jobDescriptionPaths = do
 
   post "/api/job-descriptions/:id/publish" $ do
     jobDescId <- param "id"
-    json =<< lift ( publishJob jobDescId )
+    result <- lift ( try $ publishJob jobDescId )
+    case result of
+      Left (DatabaseException e@(ItemNotFoundException _)) -> do
+        status notFound404
+        text (TL.pack . show $ e)
+      Left (NixException e) -> do
+        status badRequest400
+        text (TL.pack . show $ e)
+      Left e -> do
+        raise (TL.pack . show $ e)
+      Right job -> do
+        status created201
+        json job
 
 
 jobPaths :: API env
@@ -177,9 +192,13 @@ jobPaths = do
   get "/api/jobs/" $ do
     json =<< lift ( listJobs )
 
-workerPaths :: API env
-workerPaths = do
-  post "/api/worker/" $ do
+workersPaths :: API env
+workersPaths = do
+  get "/api/workers" $ do
+    withName <- maybeParam "name"
+    json =<< lift ( listWorkers withName )
+
+  post "/api/workers/" $ do
     name <- jsonData
     req <- request
     case remoteHost req of
@@ -189,7 +208,7 @@ workerPaths = do
         status badRequest400
         text "Needs to connect with an IPv6 address"
 
-  post "/api/worker/:workerId/work" $ do
+  post "/api/workers/:workerId/work" $ do
     workerId <- param "workerId"
     result <- lift ( startWork workerId )
     case result of
@@ -227,6 +246,14 @@ findOrFail m =
   lift m >>= \case
     Just r -> json r
     Nothing -> status notFound404
+
+maybeParam ::
+  (Parsable a, Monad m, ScottyError e)
+  => TL.Text
+  -> ActionT e m (Maybe a)
+maybeParam s =
+  (Just <$> param s) `rescue` const (return Nothing)
+
 
 tShow :: Show a => a -> TL.Text
 tShow = TL.pack . show

@@ -9,7 +9,7 @@ Description : The data transfer objects of middleman
 -}
 
 module Middleman.DTO
-  ( DB.Entity
+  ( DB.Entity (..)
 
   , DB.Group (..)
   , DB.GroupId
@@ -17,13 +17,19 @@ module Middleman.DTO
   , DB.JobDescription (..)
   , DB.JobDescriptionId
 
+  , DB.Job (..)
+  , DB.JobId (..)
+
   , DB.Worker (..)
   , DB.WorkerId
+  , NewWorker (..)
 
   , DB.Work (..)
   , DB.WorkId
-
   , DB.WorkDetails (..)
+
+  , DB.Success (..)
+
   , Info (..)
   )
   where
@@ -43,14 +49,22 @@ import Web.Scotty.Trans
 
 -- middleman
 import qualified Middleman.Server.Model as DB
+import Network.HTTP.Client.Helper (Writeable (..))
 import TH
 
 data Info =
   Info
-  { infoStoreAddress :: !String
+  { infoStoreUrl :: !String
   } deriving (Show, Generic)
 
 deriveJSON (def 4) ''Info
+
+data NewWorker =
+  NewWorker
+  { newWorkerName :: !Text
+  }
+
+deriveJSON (def 9) ''NewWorker
 
 instance (Parsable DB.GroupId) where
   parseParam txt =
@@ -75,3 +89,21 @@ instance (Parsable DB.Success) where
       "succeded" -> return $ DB.Succeded
       "failed" -> return $ DB.Failed
       _ -> Left "Could not read success"
+
+instance (Writeable DB.GroupId) where
+  writeParam = writeParam . DB.fromSqlKey
+
+instance (Writeable DB.JobDescriptionId) where
+  writeParam = writeParam . DB.fromSqlKey
+
+instance (Writeable DB.WorkerId) where
+  writeParam = writeParam . DB.fromSqlKey
+
+instance (Writeable DB.WorkId) where
+  writeParam = writeParam . DB.fromSqlKey
+
+instance (Writeable DB.Success) where
+  writeParam = \case
+    DB.Retry -> "retry"
+    DB.Succeded -> "succeded"
+    DB.Failed -> "failed"

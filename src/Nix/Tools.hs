@@ -43,6 +43,13 @@ inStore ::
 inStore drv =
   "/nix/store" </> Text.unpack (derivationName drv) <.> "drv"
 
+fromStorePath ::
+  FilePath -> Derivation
+fromStorePath =
+  Derivation . Text.pack . takeBaseName
+
+
+
 -- * Verification of nix.
 
 -- * Copy to the store
@@ -99,7 +106,7 @@ removeGCRoot ::
   -> m ()
 removeGCRoot name = do
   gcroot <- view gcRootL
-  liftIO $ removeFile (gcroot </> name) `onException` return ()
+  void . liftIO . tryIO $ removeFile (gcroot </> name)
 
 ensureGCRoot ::
   (HasGCRoot env, MonadReader env m, MonadIO m)
@@ -125,13 +132,13 @@ validateLink ::
 validateLink name = do
   gcroot <- view gcRootL
   let file = (gcroot </> name)
-  link <- liftIO $ do
+  l <- liftIO $ do
     handleIO (throwIO . InvalidGCRoot file . show ) $ do
       readSymbolicLink file
 
-  linkExits <- liftIO $ doesPathExist link
+  linkExits <- liftIO $ doesPathExist l
   when (not linkExits) $ do
-    throwIO $ InvalidGCRoot file ("Link does not exits: " ++ link)
+    throwIO $ InvalidGCRoot file ("Link does not exits: " ++ l)
 
 -- * Exception
 

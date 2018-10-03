@@ -24,6 +24,7 @@ import           Import hiding ((<.>))
 import           Nix
 import           DTOs
 import           ServerAccess
+import qualified Middleman.Client as Client
 
 data WorkerOptions = WorkerOptions
   { _wopsServerUrl :: !String
@@ -44,29 +45,6 @@ instance HasServerAccess WorkerApp where
   serverPort = Import.options . optionsPort
   serverName = workerOptions . wopsServerUrl
 
-mkRegulators ::
-  (MonadReader env m, MonadIO m, HasLogFunc env)
-  => Maybe (Int, Int)
-  -> [Regulator m]
-mkRegulators memory = case memory of
-  Just (freeLower, freeUpper) ->
-    let
-      outOfMemoryRegulator = Regulator $ do
-        sys <- liftIO $ sysInfo
-        case fromIntegral . freeram <$> sys of
-            Right free -> do
-              let x = if free > freeUpper then GT else if free < freeLower then LT else EQ
-              logDebug $ "Running memory regulator, found free "
-                <> displayShow free
-                <> " is " <> displayShow x
-                <> " in range " <> displayShow (freeLower, freeUpper)
-              return x
-            Left _ -> do
-              logError "Cannot find sys"
-              return EQ
-    in [ outOfMemoryRegulator ]
-  Nothing -> []
-
 worker :: WorkerOptions -> RIO App ()
 worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) $ do
   hostname <- getHostName
@@ -75,14 +53,19 @@ worker ops = ask >>= \app -> runRIO (OptionsWithApp app ops) $ do
   memory <- view wopsFreeMemory
   regulateTime <- view wopsRegulateTime
 
-  runPool (PoolSettings maxJobs (mkRegulators memory) regulateTime) $ \pool -> forever $ do
-    handle (\(e :: WorkerException) -> logError (displayShow e) >> waitForInput ) $ do
-      bracketOnError
-        ( waitForActivePool pool >> getWork hostname )
-        reportFailureToServer
-        ( maybe waitForInput ( computeAndCopyToServer pool ) )
+
+  runPool (PoolSettings maxJobs (mkRegulators memory) regulateTime) $
+    \pool -> forever $ do
+      handle errorAndWaitForInput $ do
+        bracketOnError
+          ( waitForActivePool pool >> getWork hostname )
+          reportFailureToServer
+          ( maybe waitForInput ( computeAndCopyToServer pool ) )
 
   where
+    errorAndWaitForInput =
+      \(e :: WorkerException) -> logError (displayShow e) >> waitForInput
+
     reportFailureToServer = \case
       Just (_, _, workId) ->
         reportResult workId Retry
@@ -171,6 +154,31 @@ getWork workerName = do
     parseResponseBody r =  do
       wnd <- eitherDecode (r ^. responseBody)
       return ( Derivation (wndtoDerivation wnd), wndtoOutput wnd, wndtoWorkId wnd )
+
+mkRegulators ::
+  (MonadReader env m, MonadIO m, HasLogFunc env)
+  => Maybe (Int, Int)
+  -> [Regulator m]
+mkRegulators memory = case memory of
+  Just (freeLower, freeUpper) ->
+    let
+      outOfMemoryRegulator = Regulator $ do
+        sys <- liftIO $ sysInfo
+        case fromIntegral . freeram <$> sys of
+            Right free -> do
+              let x = if free > freeUpper then GT else if free < freeLower then LT else EQ
+              logDebug $ "Running memory regulator, found free "
+                <> displayShow free
+                <> " is " <> displayShow x
+                <> " in range " <> displayShow (freeLower, freeUpper)
+              return x
+            Left _ -> do
+              logError "Cannot find sys"
+              return EQ
+    in [ outOfMemoryRegulator ]
+  Nothing -> []
+
+
 
 -- | Report the result to the server
 reportResult ::

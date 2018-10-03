@@ -3,7 +3,7 @@ module Run
   , Mode (..)
   , WorkerOptions(..)
   , ServerOptions(..)
-  , ClientOptions(..)
+  , PushOptions(..)
   ) where
 
 import           Import
@@ -15,7 +15,7 @@ import           Worker
 
 data Mode
   = ModeServer !ServerOptions
-  | ModeClient !ClientOptions
+  | ModePush !PushOptions
   | ModeWorker !WorkerOptions
 
 run :: Mode -> RIO App ()
@@ -25,5 +25,5 @@ run mode = do
       server sops
     ModeWorker wops ->
       worker wops
-    ModeClient cops ->
-      client cops
+    ModePush cops ->
+      push cops
