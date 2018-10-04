@@ -3,3 +3,5 @@
 *.swp
 tarballs/
 .stack-work/
+
+.DS_Store
