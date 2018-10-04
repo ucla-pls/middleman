@@ -316,3 +316,9 @@ instance Display JobId where
 
 instance Display JobDescriptionId where
   display i = "JobDescriptionId(" <> display (fromSqlKey i) <> ")"
+
+instance Display WorkerId where
+  display i = "Worker(" <> display (fromSqlKey i) <> ")"
+
+instance Display WorkId where
+  display i = "Work(" <> display (fromSqlKey i) <> ")"

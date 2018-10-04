@@ -8,9 +8,9 @@ module Run
 
 import           Import
 
-import           Client
-import           Server
-import           Worker
+import           Middleman.Push
+import           Middleman.Server
+import           Middleman.Worker
 
 
 data Mode

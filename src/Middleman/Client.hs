@@ -17,6 +17,10 @@ module Middleman.Client
 
   , getJobWithDescription
 
+  , ensureWorker
+  , pullWork
+  , finishWork
+
   -- * Rexports
   , HasServerAccess (..)
   , Server (..)
@@ -91,7 +95,7 @@ getWorker name = do
 
 postWorker :: Text -> Client (Entity Worker)
 postWorker name =
-  post ( NewWorker name ) . expectCreated . json $
+  post ( NewWorker name ) . expectOk . json $
     "api" </> "workers" <?> []
 
 ensureWorker :: Text -> Client (Entity Worker)
@@ -108,3 +112,8 @@ pullWork workerId =
   post () . expectNoContent . json $
     "api" </> "workers" </> value workerId </> "work" <?> []
 
+finishWork ::
+  WorkId -> Success -> Client ()
+finishWork workId succ =
+  post () . expectOk . json $
+    "api" </> "work" </> value workId </> value succ <?> []

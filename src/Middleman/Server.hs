@@ -1,6 +1,14 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Server (server, ServerOptions(..)) where
+{-
+Module      : Middleman.Server
+Copyright   : (c) Christian Gram Kalhauge, 2018
+License     : BSD
+Maintainer  : kalhuage@cs.ucla.edu
+Stability   : experimental
+Description : The middleman server
+-}
+module Middleman.Server (server, ServerOptions(..)) where
 
 -- base
 import           Data.Pool
@@ -39,9 +47,7 @@ import           Database.Persist.Postgresql   (withPostgresqlPool, SqlBackend)
 -- middleman
 import           Import                    hiding ((<.>))
 import           WebServer
-
 import Nix.Tools (HasGCRoot(..))
-
 import Middleman.Server.Control
 import Middleman.Server.Exception
 import Middleman.DTO as DTO
@@ -81,7 +87,6 @@ instance HasSqlPool ServerApp where
 instance HasProcessContext ServerApp where
   processContextL = app . processContextL
 
-
 -- * Server implementation
 
 server ::
@@ -101,7 +106,8 @@ server ops = ask >>= \a ->
         env <- ask
         scottyT port (runRIO env) serverDescription
 
-serverDescription :: API env
+serverDescription ::
+  HasServerOptions env => API env
 serverDescription = do
   middleware (Network.Wai.Middleware.RequestLogger.logStdout)
   api
@@ -111,20 +117,17 @@ type API env =
   ( HasSqlPool env
   , HasGCRoot env
   , HasLogFunc env
-  , HasServerOptions env
   , HasProcessContext env)
   => ScottyT TL.Text (RIO env) ()
 
 -- | The api of the server
-api :: API env
+api :: HasServerOptions env => API env
 api = do
-
   get "/api" $ do
     storeurl <- lift . view $ serverOptions . sopsStoreUrl
     json $ Info
       { infoStoreUrl = storeurl
       }
-
   groupPaths
   jobDescriptionPaths
   jobPaths
@@ -139,12 +142,12 @@ groupPaths = do
     json grps
 
   post "/api/groups/" $ do
-    group <- jsonData
-    result <- lift . try $ createGroup group
+    grp <- jsonData
+    result <- lift . try $ createGroup grp
     case result of
-      Left (ItemAlreadyExists grp) -> do
+      Left (ItemAlreadyExists r) -> do
         status badRequest400
-        text ("Group already exist " <> tShow grp)
+        text ("Group already exist " <> tShow r)
         finish
       Right entity ->
         json entity
@@ -161,7 +164,6 @@ groupPaths = do
 
 jobDescriptionPaths :: API env
 jobDescriptionPaths = do
-
   post "/api/job-descriptions/" $ do
     descs :: [JobDescription] <- jsonData `rescue` const next
     results <- forM descs $ \desc ->
@@ -208,7 +210,6 @@ jobDescriptionPaths = do
         status created201
         json job
 
-
 jobPaths :: API env
 jobPaths = do
   get "/api/jobs/" $ do
@@ -222,11 +223,12 @@ workersPaths = do
     json =<< lift ( listWorkers withName )
 
   post "/api/workers/" $ do
-    name <- jsonData
+    name <- newWorkerName <$> jsonData
     req <- request
     case remoteHost req of
       SockAddrInet _ ipaddress -> do
-        json =<< lift ( upsertWorker $ Worker name ipaddress )
+        result <- lift ( upsertWorker $ Worker name ipaddress )
+        json result
       _ -> do
         status badRequest400
         text "Needs to connect with an IPv6 address"
@@ -254,7 +256,25 @@ workPaths = do
   post "/api/work/:workId/:succ" $ do
     workId <- param "workId"
     succ <- param "succ"
-    lift (finishWork workId succ)
+    result <- lift . try $ finishWork workId succ
+    case result of
+      Left (DatabaseException e@(ItemNotFoundException _)) -> do
+        status notFound404
+        text (TL.pack . show $ e)
+      Left (DatabaseException e@(ItemAlreadyExists _)) -> do
+        status badRequest400
+        text (TL.pack . show $ e)
+      Left (InvalidInput e) -> do
+        status badRequest400
+        text (TL.pack . show $ e)
+      Left (NixException e) -> do
+        status badRequest400
+        text (TL.pack . show $ e)
+      Left e -> do
+        raise (TL.pack . show $ e)
+      Right job -> do
+        status ok200
+        json job
 
 
 -- * Utils
@@ -274,7 +294,6 @@ maybeParam ::
   -> ActionT e m (Maybe a)
 maybeParam s =
   (Just <$> param s) `rescue` const (return Nothing)
-
 
 tShow :: Show a => a -> TL.Text
 tShow = TL.pack . show

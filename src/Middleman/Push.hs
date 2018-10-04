@@ -1,6 +1,15 @@
 {-# LANGUAGE TemplateHaskell #-}
-module Client where
+{-
+Module      : Middleman.Push
+Copyright   : (c) Christian Gram Kalhauge, 2018
+License     : BSD
+Maintainer  : kalhuage@cs.ucla.edu
+Stability   : experimental
+Description : The push functionality
 
+Pushes nix derivations to the server.
+-}
+module Middleman.Push where
 
 -- rio
 import RIO.FilePath
@@ -32,7 +41,6 @@ instance HasPushOptions PushApp where
 instance HasServerAccess PushApp where
   serverL = pushOptions . copsServer
   managerL = extraOptionsL . _2
-
 
 push :: PushOptions -> RIO App ()
 push ops = do

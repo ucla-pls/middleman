@@ -106,7 +106,10 @@ publishJob descId = do
   output <- handleNix $
     Nix.readDerivationOutput
     ( DB.jobDescriptionDerivation desc )
-  Nix.ensureGCRoot ( relativeLinkOfJob desc ) output
+
+  Nix.ensureGCRoot
+    ( takeBaseName output )
+    ( relativeLinkOfJob desc )
 
   -- Creation
   DB.inDB ( DB.createJob (DB.Job descId Nothing output) )
@@ -183,4 +186,3 @@ relativeLinkOfJob ::
 relativeLinkOfJob desc =
   RIO.FilePath.dropExtensions
     ( relativeLinkOfJobDescription desc )
-  ++ "-output"

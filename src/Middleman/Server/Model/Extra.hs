@@ -30,6 +30,7 @@ data Success =
   Succeded
   | Failed
   | Retry
+  | Timeout
   deriving (Show, Generic, Eq, Ord)
 
 successToInt :: Success -> Int
@@ -37,12 +38,14 @@ successToInt = \case
   Succeded -> 0
   Failed -> 1
   Retry -> 2
+  Timeout -> 3
 
 successFromInt :: Int -> Maybe Success
 successFromInt = \case
   0 -> Just Succeded
   1 -> Just Failed
   2 -> Just Retry
+  3 -> Just Timeout
   _ -> Nothing
 
 deriveJSON defaultOptions ''Success
@@ -53,7 +56,7 @@ instance PersistField Success where
   fromPersistValue = \case
     PersistInt64 n ->
       maybe
-        (Left $ "Bad success value, required 0, 1, or 2, was" <> pack (show n))
+        (Left $ "Bad success value, required 0, 1, 2, or 3 was" <> pack (show n))
         Right
         (successFromInt . fromIntegral $ n)
     x -> Left $ "Bad success value, required int, was " <> pack (show x)

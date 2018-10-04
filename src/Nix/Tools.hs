@@ -14,6 +14,7 @@ import Control.Lens ((^?))
 
 -- base
 import Data.Typeable
+import Control.Exception (AsyncException(UserInterrupt))
 import Text.Show
 
 -- aeson
@@ -48,6 +49,11 @@ fromStorePath ::
 fromStorePath =
   Derivation . Text.pack . takeBaseName
 
+outputInStore ::
+  FilePath -> FilePath
+outputInStore filepath =
+  "/nix/store" </> filepath
+
 -- * Verification of nix.
 
 -- * Copy to the store
@@ -81,7 +87,7 @@ readDerivationOutput p = do
     Nothing -> throwIO $ InvalidDerivation path
 
 realizeDerivation ::
-  (HasLogFunc env, HasProcessContext env, MonadReader env m, MonadIO m)
+  (HasLogFunc env, HasProcessContext env, MonadReader env m, MonadUnliftIO m)
   => Derivation -- ^ Derivation
   -> FilePath -- ^ Root
   -> m (Maybe [FilePath])
@@ -90,9 +96,9 @@ realizeDerivation drv root = do
     [ "-j", "1"
     , "-r", inStore drv
     , "--add-root", root
-    , "--indirect"
-    ]
-    readProcessLines
+    , "--indirect" ]
+    $ readProcessLines
+    . setStderr closed
 
 
 class HasGCRoot env where
@@ -162,17 +168,20 @@ runSilentProcess =
   . setStdin closed
 
 readProcessLines ::
-  MonadIO m
+  MonadUnliftIO m
   => ProcessConfig stdin stdout stderrIgnored
   -> m (Maybe [String])
-readProcessLines p = do
-  (ec, bs) <- readProcessStdout p
-  return $
-    case (ec, decodeUtf8'. BL.toStrict $ bs) of
+readProcessLines pc = do
+  withProcess (setStdout byteStringOutput $ pc) $ \p -> do
+    (ec, bl) <- atomically $
+      liftM2 (,)
+       ( waitExitCodeSTM p )
+       ( getStdout p )
+    case (ec, decodeUtf8' . BL.toStrict $ bl) of
       (ExitSuccess, Right txt) ->
-        Just (RIO.map Text.unpack $ Text.lines txt)
+        return . Just . RIO.map Text.unpack $ Text.lines txt
       _ ->
-        Nothing
+        return Nothing
 
 readProcessJSON ::
   (MonadIO m, FromJSON a)

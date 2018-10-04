@@ -119,7 +119,7 @@ expect :: [ Status ] -> Request b a -> Request b a
 expect sts req = req
   { handler = \res -> do
       when (not ((H.responseStatus res) `List.elem` sts)) .
-        throwIO $ UnexpectedStatus (H.responseStatus res)
+        throwIO $ UnexpectedStatus (H.responseStatus res) (H.responseBody res)
       handler req res
   }
 
@@ -184,7 +184,7 @@ delete req = do
 data HttpClientException
   = HttpException !H.HttpException
   | BadResponseFormat !String
-  | UnexpectedStatus !Status
+  | UnexpectedStatus !Status !BL.ByteString
   deriving (Show, Typeable)
 
 instance Exception HttpClientException

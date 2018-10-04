@@ -13,15 +13,17 @@ import  Prelude
 import           Control.Monad
 import           Control.Concurrent
 import           Data.Foldable
+import Data.Semigroup
+import qualified Data.Set as Set
 
 -- unliftio
 import           UnliftIO
-import qualified Data.Set as Set
 
 data PoolSettings m = PoolSettings
   { maxJobs :: !Int
   , regulators :: ![ Regulator m ]
   , regulateEvery :: !Seconds
+  , retryRegulatedJobs :: !Bool
   }
 
 type Seconds = Rational
@@ -35,11 +37,12 @@ data PoolState m = PoolState
   { currentMaxJobs :: !(TVar Int)
   , currentWorkers :: !(TVar (Set.Set (Async ())))
   , currentWaitingJobs :: !(TChan (m ()))
+  , settings :: !(PoolSettings m)
   }
 
 
 newPoolStateSTM :: PoolSettings m -> STM (PoolState m)
-newPoolStateSTM (PoolSettings{..}) = do
+newPoolStateSTM (settings@PoolSettings{..}) = do
   currentMaxJobs <- newTVar maxJobs
   currentWorkers <- newTVar Set.empty
   currentWaitingJobs <- newTChan
@@ -55,13 +58,21 @@ cleanupPoolState ps = do
   mapM_ uninterruptibleCancel workers
 
 
+waitForActivePoolSTM ::
+  PoolState m
+  -> STM ()
+waitForActivePoolSTM (PoolState {..}) = do
+  isEmpty <- isEmptyTChan currentWaitingJobs
+  size <- Set.size <$> readTVar currentWorkers
+  max' <- readTVar currentMaxJobs
+  guard (size < max' && isEmpty)
+
 waitForActivePool ::
   MonadUnliftIO m
   => PoolState m
   -> m ()
-waitForActivePool (PoolState {..}) = do
-  atomically $ do
-    isEmptyTChan currentWaitingJobs >>= guard
+waitForActivePool ps = do
+  atomically $ waitForActivePoolSTM ps
 
 dispatch :: MonadUnliftIO m =>
   (PoolState m)
@@ -70,10 +81,12 @@ dispatch :: MonadUnliftIO m =>
 dispatch ps@(PoolState{..}) work = do
   -- Write the job to the queue
   atomically $ do
+    waitForActivePoolSTM ps
     writeTChan currentWaitingJobs work
 
-  -- Ensure that request have been processed, if the pool is blocked, this will block
-  waitForActivePool ps
+  -- Don't continue before job has been accepted
+  atomically $ do
+    isEmptyTChan currentWaitingJobs >>= guard
 
 waitForPool ::
   MonadUnliftIO m
@@ -119,8 +132,9 @@ runPoolManager (PoolState {..}) = do
                     `withException`
                     \(AsyncExceptionWrapper e) -> do
                       case fromException (toException e) of
-                        Just RegulationKillException -> do
-                          atomically (writeTChan currentWaitingJobs work)
+                        Just RegulationKillException ->
+                          when (retryRegulatedJobs $ settings)
+                          ( atomically (writeTChan currentWaitingJobs work) )
                         Nothing -> return ()
                   )
             )
@@ -146,7 +160,7 @@ runPool poolSettings@(PoolSettings {..}) run = do
     runRegulators :: PoolState m -> m ()
     runRegulators (PoolState {..}) = forever $ do
       liftIO $ threadDelay (floor (regulateEvery * 1e6))
-      cmp <- fold <$> mapM runRegulator regulators
+      Min cmp <- foldMap Min <$> mapM runRegulator regulators
       case cmp of
         EQ ->
           return ()

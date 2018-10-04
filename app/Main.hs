@@ -48,14 +48,7 @@ main = do
         "Try to get work on the server"
         ModeWorker
         ( WorkerOptions
-          <$> option str
-            (long "server" <> value "localhost" <> showDefault
-             <> help "The url of the server"
-            )
-          <*> option str
-            (long "store" <> value "file:///nix/store" <> showDefault
-             <> help "The connection string of the store"
-            )
+          <$> parseServer
           <*> option auto
             (short 'j' <> long "job" <> value 1 <> showDefault
              <> help "The max number of job to use in parallel"

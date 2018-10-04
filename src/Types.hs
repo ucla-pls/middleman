@@ -6,7 +6,6 @@ import RIO.Process
 
 import Control.Lens
 
-
 -- | Command line arguments
 data Options = Options
   { _optionsVerbose :: !Bool
@@ -19,7 +18,6 @@ data App = App
   , appOptions :: !Options
   -- Add other app-specific configuration information here
   }
-
 
 data LocalStore = LocalStore
   { _storeGCRoot :: !String
