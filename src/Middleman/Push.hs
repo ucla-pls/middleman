@@ -24,6 +24,7 @@ import Import
 import Middleman.Client as Client
 import Middleman.DTO
 import qualified Nix.Tools as Nix
+import qualified Nix.Types as Nix
 
 data PushOptions = PushOptions
   { _copsServer :: !Server
@@ -47,8 +48,9 @@ push ops = do
   manager <- liftIO $ newManager defaultManagerSettings
   ask >>= \app -> runRIO (OptionsWithApp app (ops, manager)) pushApp
 
+pushApp :: RIO (OptionsWithApp (PushOptions, Manager)) ()
 pushApp = do
-  derivations <- List.map Nix.fromStorePath <$> view copsDerivations
+  derivations <- List.map Nix.fromStore <$> view copsDerivations
   groupName <- view copsGroup
 
   info <- Client.getInfo
@@ -73,15 +75,16 @@ pushApp = do
         "Copy " <> display (List.length uploads) <> " jobs to the server..."
 
       Nix.copyToStore (infoStoreUrl info)
-        . List.map (\(_, _, desc) -> Nix.inStore $ jobDescriptionDerivation desc)
+        . List.map (\(_, _, desc) -> jobDescriptionDerivation desc)
         $ uploads
 
       forM_ uploads $ \(jkey, _, desc) -> do
-        publishJobDescription jkey
+        ejob <- publishJobDescription jkey
         logInfo $
           "Done uploading "
           <> displayShow (jobDescriptionDerivation desc)
           <> " : " <> display jkey
+          <> " as " <> display (entityKey ejob)
   where
     removeConflictingDerivation (key, isSame, desc) = do
       let JobDescription drv groupId = desc

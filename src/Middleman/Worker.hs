@@ -14,8 +14,6 @@ module Middleman.Worker
 
 -- rio
 import RIO.Process
-import           RIO.Directory
-import RIO.FilePath
 import RIO.List as List
 import qualified RIO.Text as Text
 import qualified RIO.ByteString.Lazy as BL
@@ -37,6 +35,7 @@ import Middleman.Client as Client
 import Middleman.DTO
 import Network.HTTP.Client.Helper
 import Nix.Tools as Nix
+import Nix.Types as Nix
 
 data WorkerOptions = WorkerOptions
   { _wopsServer :: !Server
@@ -92,15 +91,15 @@ workerApp = do
         ( do
             result <- performJob timelimit drv
             case result of
-              Just filepath -> do
+              Just output -> do
                 logInfo $ display workDetailsId
                   <> " completed successfully."
-                Nix.copyToStore (infoStoreUrl info) [Nix.outputInStore filepath]
+                Nix.copyToStore (infoStoreUrl info) [output]
                 Client.finishWork workDetailsId Succeded
               Nothing -> do
                 logError $ display workDetailsId
                   <> " timed out after " <> display timelimit <> "."
-                Client.finishWork workDetailsId Failed
+                Client.finishWork workDetailsId Timeout
           ) `withException` (
           \(e :: SomeException) -> do
             logError $ display workDetailsId
@@ -128,7 +127,7 @@ workerApp = do
 
     waitForInput = do
       let delay = 10.0
-      logDebug $ "Waiting for server for " <> display delay <> "seconds..."
+      logDebug $ "Waiting for server for " <> display delay <> " seconds..."
       threadDelay (seconds delay)
 
 -- * Access commands
@@ -140,18 +139,15 @@ performJob ::
   -- ^ Timelimit in seconds
   -> Derivation
   -- ^ Derivation name
-  -> RIO env (Maybe FilePath)
+  -> RIO env (Maybe OutputPath)
 performJob timelimit drv = do
   threadId <- myThreadId
-  succ <-
-    timeout (seconds timelimit)
+  succ <- timeout (seconds timelimit)
     $ Nix.realizeDerivation drv
-    ("middleman-link/" ++ show threadId)
-  case join succ of
-    Just [fp] ->
-      Just . takeBaseName <$> canonicalizePath fp
-    _ ->
-      return Nothing
+          ("middleman-link/" ++ show threadId)
+  return $ case join succ of
+    Just [fp] -> Just fp
+    _ -> Nothing
 
 -- * Regulator
 

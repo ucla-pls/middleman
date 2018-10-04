@@ -14,7 +14,6 @@ import Control.Lens ((^?))
 
 -- base
 import Data.Typeable
-import Control.Exception (AsyncException(UserInterrupt))
 import Text.Show
 
 -- aeson
@@ -32,49 +31,33 @@ import RIO.FilePath
 import RIO.Directory
 import qualified RIO.ByteString.Lazy as BL
 
-
--- * Derivation
-
-newtype Derivation =
-  Derivation { derivationName :: Text.Text }
-  deriving (Show, Eq)
-
-inStore ::
-  Derivation -> FilePath
-inStore drv =
-  "/nix/store" </> Text.unpack (derivationName drv) <.> "drv"
-
-fromStorePath ::
-  FilePath -> Derivation
-fromStorePath =
-  Derivation . Text.pack . takeBaseName
-
-outputInStore ::
-  FilePath -> FilePath
-outputInStore filepath =
-  "/nix/store" </> filepath
-
--- * Verification of nix.
+-- middleman
+import Nix.Types
 
 -- * Copy to the store
 
--- | The url to the store.
-type Store = String
-
 copyToStore ::
-  (HasLogFunc env, HasProcessContext env, MonadReader env m, MonadIO m)
+  (HasLogFunc env
+  , HasProcessContext env
+  , MonadReader env m
+  , MonadIO m
+  , InStore a)
   => Store
-  -> [FilePath] -- ^ Paths
+  -> [a] -- ^ Paths
   -> m ()
 copyToStore store fps = do
-  ec <- proc "nix" (["copy", "--to", store] ++ fps) $ runSilentProcess
+  ec <- proc
+    "nix"
+    ( ["copy", "--to", (toStoreUrl store)]
+      ++ (map inStore fps)
+    ) $ runSilentProcess
   when (ec /= ExitSuccess) $
-    throwIO $ CouldNotCopyToStore store fps
+    throwIO $ CouldNotCopyToStore store (map inStore fps)
 
 readDerivationOutput ::
   (HasLogFunc env, HasProcessContext env, MonadReader env m, MonadIO m)
   => Derivation
-  -> m FilePath
+  -> m OutputPath
 readDerivationOutput p = do
   let path = inStore p
   x :: Maybe Value <-
@@ -83,22 +66,31 @@ readDerivationOutput p = do
         x ^? traverse . key (Text.pack path)
            . key "outputs" . key "out" . key "path" . _JSON
   case output of
-    Just filepath -> return filepath
+    Just filepath -> return $ fromStore filepath
     Nothing -> throwIO $ InvalidDerivation path
 
 realizeDerivation ::
-  (HasLogFunc env, HasProcessContext env, MonadReader env m, MonadUnliftIO m)
+  ( HasLogFunc env
+  , HasProcessContext env
+  , MonadReader env m
+  , MonadUnliftIO m )
   => Derivation -- ^ Derivation
   -> FilePath -- ^ Root
-  -> m (Maybe [FilePath])
+  -> m (Maybe [OutputPath])
 realizeDerivation drv root = do
-  proc "nix-store"
+  result <- proc "nix-store"
     [ "-j", "1"
     , "-r", inStore drv
     , "--add-root", root
     , "--indirect" ]
     $ readProcessLines
     . setStderr closed
+  case result of
+    Just fps -> do
+      paths <- mapM canonicalizePath fps
+      return . Just . map fromStore $ paths
+    Nothing ->
+      return Nothing
 
 
 class HasGCRoot env where
@@ -113,15 +105,13 @@ removeGCRoot name = do
   void . liftIO . tryIO $ removeFile (gcroot </> name)
 
 ensureGCRoot ::
-  (HasGCRoot env, MonadReader env m, MonadIO m)
-  => FilePath
+  (HasGCRoot env, MonadReader env m, MonadIO m, InStore a)
+  => a
   -> FilePath
   -> m ()
-ensureGCRoot storepath name = do
+ensureGCRoot a name = do
   gcroot <- view gcRootL
-  liftIO $ forceCreateSymbolicLink
-    ("/nix/store" </> storepath)
-    (gcroot </> name)
+  liftIO $ forceCreateSymbolicLink (inStore a) (gcroot </> name)
   where
     forceCreateSymbolicLink dest src = do
       catchAny (createSymbolicLink dest src) $ \_ -> do

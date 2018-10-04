@@ -46,8 +46,9 @@ import           Database.Persist.Postgresql   (withPostgresqlPool, SqlBackend)
 
 -- middleman
 import           Import                    hiding ((<.>))
-import           WebServer
+-- import           WebServer
 import Nix.Tools (HasGCRoot(..))
+import Nix.Types (Store)
 import Middleman.Server.Control
 import Middleman.Server.Exception
 import Middleman.DTO as DTO
@@ -57,7 +58,7 @@ import Middleman.Server.Model (HasSqlPool(..), migrateDB, Entity(..))
 
 data ServerOptions = ServerOptions
   { _sopsConnectionString :: !Text
-  , _sopsStoreUrl :: !String
+  , _sopsStoreUrl :: !Store
   , _sopsGCRoot :: !FilePath
   }
 makeClassy ''ServerOptions

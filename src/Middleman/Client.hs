@@ -9,6 +9,7 @@ Description : Bindings for accessing the server
 module Middleman.Client
   ( getInfo
 
+  , getGroup
   , getGroupWithName
 
   , postJobDescription
@@ -21,15 +22,12 @@ module Middleman.Client
   , pullWork
   , finishWork
 
-  -- * Rexports
+  -- * Re-exports
   , HasServerAccess (..)
   , Server (..)
   , Manager
   )
   where
-
--- http-types
-import Network.HTTP.Types.Status
 
 -- http-client
 import Network.HTTP.Client

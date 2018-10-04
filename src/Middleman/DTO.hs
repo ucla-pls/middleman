@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-
 Module      : Middleman.DTO
 Copyright   : (c) Christian Gram Kalhauge, 2018
@@ -18,7 +19,7 @@ module Middleman.DTO
   , DB.JobDescriptionId
 
   , DB.Job (..)
-  , DB.JobId (..)
+  , DB.JobId
 
   , DB.Worker (..)
   , DB.WorkerId
@@ -39,9 +40,10 @@ import Data.Functor
 
 -- rio
 import RIO
-import RIO.Time
+import RIO.Text as Text
 
 -- aeson
+import Data.Aeson
 import Data.Aeson.TH
 
 -- scotty
@@ -52,9 +54,11 @@ import qualified Middleman.Server.Model as DB
 import Network.HTTP.Client.Helper (Writeable (..))
 import TH
 
+import Nix.Types as Nix
+
 data Info =
   Info
-  { infoStoreUrl :: !String
+  { infoStoreUrl :: !Nix.Store
   } deriving (Show, Generic)
 
 deriveJSON (def 4) ''Info
@@ -88,6 +92,7 @@ instance (Parsable DB.Success) where
       "retry" -> return $ DB.Retry
       "succeded" -> return $ DB.Succeded
       "failed" -> return $ DB.Failed
+      "timeout" -> return $ DB.Timeout
       _ -> Left "Could not read success"
 
 instance (Writeable DB.GroupId) where
@@ -107,3 +112,11 @@ instance (Writeable DB.Success) where
     DB.Retry -> "retry"
     DB.Succeded -> "succeded"
     DB.Failed -> "failed"
+    DB.Timeout -> "timeout"
+
+instance (FromJSON Nix.Store) where
+  parseJSON = withText "Store"
+    (return . Nix.storeFromUrl . Text.unpack)
+
+instance (ToJSON Nix.Store) where
+  toJSON = String . Text.pack . Nix.toStoreUrl

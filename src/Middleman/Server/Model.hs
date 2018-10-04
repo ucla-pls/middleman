@@ -89,7 +89,7 @@ import Data.Aeson.TH
 
 -- middleman
 import           Middleman.Server.Exception
-import           Nix.Tools (Derivation(..))
+import           Nix.Types
 import           Middleman.Server.Model.Extra
 import TH
 
@@ -113,7 +113,7 @@ share
   Job json
     descId JobDescriptionId
     workId WorkId Maybe
-    output FilePath
+    output OutputPath
     UniqueJobDescription descId
     UniqueJobWorkId workId !force
     deriving Show Generic

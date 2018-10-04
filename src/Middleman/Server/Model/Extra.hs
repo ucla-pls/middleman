@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 {-
 Module      : Middleman.Server.Model.Extra
 Copyright   : (c) Christian Gram Kalhauge, 2018
@@ -12,7 +13,7 @@ module Middleman.Server.Model.Extra
 
 -- rio
 import RIO
-import RIO.Text
+import RIO.Text as Text
 
 -- persist
 import Database.Persist.Sql
@@ -22,7 +23,7 @@ import Data.Aeson.TH
 import Data.Aeson
 
 -- middleman
-import Nix.Tools
+import Nix.Types
 
 -- * Success
 
@@ -79,3 +80,19 @@ instance ToJSON Derivation where
 instance FromJSON Derivation where
   parseJSON = withText "Derivation" $
     return . Derivation
+
+instance PersistField OutputPath where
+  toPersistValue = PersistText . Text.pack . storeBaseName
+  fromPersistValue = \case
+    PersistText txt -> Right ( OutputPath (Text.unpack txt))
+    _ -> Left "Bad outputPath expected text"
+
+instance PersistFieldSql OutputPath where
+  sqlType _ = SqlString
+
+instance ToJSON OutputPath where
+  toJSON = String . Text.pack . storeBaseName
+
+instance FromJSON OutputPath where
+  parseJSON = withText "OutputPath" $
+    return . OutputPath . Text.unpack

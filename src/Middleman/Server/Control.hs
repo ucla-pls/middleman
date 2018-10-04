@@ -17,6 +17,7 @@ module Middleman.Server.Control
 
 -- rio
 import RIO
+import RIO.Text as Text
 import RIO.FilePath
 import RIO.Process
 import RIO.Time (getCurrentTime)
@@ -78,7 +79,7 @@ submitJobDescription ::
   DB.JobDescription -> Server m (Bool, DB.Entity DB.JobDescription)
 submitJobDescription desc = do
   Nix.ensureGCRoot
-    ( Nix.inStore $ DB.jobDescriptionDerivation desc )
+    ( DB.jobDescriptionDerivation desc )
     ( relativeLinkOfJobDescription desc )
   jobDesc <- DB.inDB ( DB.upsertJobDescription desc )
   return jobDesc
@@ -108,7 +109,7 @@ publishJob descId = do
     ( DB.jobDescriptionDerivation desc )
 
   Nix.ensureGCRoot
-    ( takeBaseName output )
+    output
     ( relativeLinkOfJob desc )
 
   -- Creation
@@ -177,12 +178,12 @@ listWork =
 
 relativeLinkOfJobDescription ::
   DB.JobDescription -> FilePath
-relativeLinkOfJobDescription desc =
-  RIO.FilePath.takeFileName
-    ( Nix.inStore ( DB.jobDescriptionDerivation desc ) )
+relativeLinkOfJobDescription =
+  (++ ".drv") . relativeLinkOfJob
 
 relativeLinkOfJob ::
   DB.JobDescription -> FilePath
-relativeLinkOfJob desc =
-  RIO.FilePath.dropExtensions
-    ( relativeLinkOfJobDescription desc )
+relativeLinkOfJob =
+  Text.unpack
+  . DB.derivationName
+  . DB.jobDescriptionDerivation
