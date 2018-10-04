@@ -6,7 +6,6 @@ import RIO.Process
 
 import Control.Lens
 
-
 -- | Command line arguments
 data Options = Options
   { _optionsVerbose :: !Bool
@@ -20,16 +19,9 @@ data App = App
   -- Add other app-specific configuration information here
   }
 
-data ServerOptions = ServerOptions
-  { _sopsRunMigration :: !Bool
-  , _sopsConnectionString :: !Text
-  , _sopsLocalStore :: !LocalStore
-  }
-
 data LocalStore = LocalStore
   { _storeGCRoot :: !String
   }
-
 
 data OptionsWithApp a = OptionsWithApp
   { innerApp :: !App
@@ -37,8 +29,10 @@ data OptionsWithApp a = OptionsWithApp
   }
 
 makeClassy ''Options
-makeClassy ''ServerOptions
 makeClassy ''LocalStore
+
+extraOptionsL :: Lens' (OptionsWithApp a) a
+extraOptionsL = lens extraOptions (\e s -> e { extraOptions = s })
 
 instance HasOptions App where
   options = lens appOptions (\x y -> x { appOptions = y })

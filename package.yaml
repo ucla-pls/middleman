@@ -24,7 +24,7 @@ dependencies:
 - rio >= 0.1.1.0
 - scotty
 - persistent
-- persistent-sqlite
+- persistent-postgresql >= 2.8.2.0
 - persistent-template 
 - uuid
 - conduit
@@ -33,6 +33,7 @@ dependencies:
 - http-types
 - network
 - wai
+- wai-extra
 - esqueleto
 - wreq
 - lens-aeson
@@ -42,6 +43,7 @@ dependencies:
 - mtl
 - transformers
 - blaze-html
+- async >= 2.2.1
 - bytestring
 - http-client
 - unliftio
