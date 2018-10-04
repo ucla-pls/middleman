@@ -1,3 +1,5 @@
+{-# LANGUAGE ExplicitForAll  #-}
+{-# LANGUAGE RecordWildCards #-}
 module Control.Concurrent.Pool
   ( PoolState
   , PoolSettings (..)
@@ -9,19 +11,19 @@ module Control.Concurrent.Pool
   ) where
 
 -- base
-import  Prelude
-import           Control.Monad
 import           Control.Concurrent
-import Data.Semigroup
-import qualified Data.Set as Set
+import           Control.Monad
+import           Data.Semigroup
+import qualified Data.Set           as Set
+import           Prelude
 
 -- unliftio
 import           UnliftIO
 
 data PoolSettings m = PoolSettings
-  { maxJobs :: !Int
-  , regulators :: ![ Regulator m ]
-  , regulateEvery :: !Seconds
+  { maxJobs            :: !Int
+  , regulators         :: ![ Regulator m ]
+  , regulateEvery      :: !Seconds
   , retryRegulatedJobs :: !Bool
   }
 
@@ -33,10 +35,10 @@ type Seconds = Rational
 newtype Regulator m = Regulator { runRegulator :: m Ordering }
 
 data PoolState m = PoolState
-  { currentMaxJobs :: !(TVar Int)
-  , currentWorkers :: !(TVar (Set.Set (Async ())))
+  { currentMaxJobs     :: !(TVar Int)
+  , currentWorkers     :: !(TVar (Set.Set (Async ())))
   , currentWaitingJobs :: !(TChan (m ()))
-  , settings :: !(PoolSettings m)
+  , settings           :: !(PoolSettings m)
   }
 
 
@@ -55,7 +57,6 @@ cleanupPoolState :: MonadUnliftIO m => (PoolState m) -> m ()
 cleanupPoolState ps = do
   workers <- atomically $ readTVar (currentWorkers ps)
   mapM_ uninterruptibleCancel workers
-
 
 waitForActivePoolSTM ::
   PoolState m
@@ -126,16 +127,15 @@ runPoolManager (PoolState {..}) = do
                 return w
             )
             ( atomically . modifyTVar currentWorkers . Set.delete )
-            ( const (
-                  (restore work)
-                    `withException`
-                    \(AsyncExceptionWrapper e) -> do
-                      case fromException (toException e) of
-                        Just RegulationKillException ->
-                          when (retryRegulatedJobs $ settings)
-                          ( atomically (writeTChan currentWaitingJobs work) )
-                        Nothing -> return ()
-                  )
+            ( const $
+              (restore work)
+                `withException`
+                \(AsyncExceptionWrapper e) -> do
+                  case fromException (toException e) of
+                    Just RegulationKillException ->
+                      when (retryRegulatedJobs $ settings)
+                      ( atomically (writeTChan currentWaitingJobs work) )
+                    Nothing -> return ()
             )
 
         -- Start the worker

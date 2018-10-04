@@ -9,6 +9,9 @@ Description : Tools for interacting with Nix
 module Nix.Tools
   where
 
+-- process
+import System.Process (interruptProcessGroupOf)
+
 -- lens
 import Control.Lens ((^?))
 
@@ -161,17 +164,23 @@ readProcessLines ::
   MonadUnliftIO m
   => ProcessConfig stdin stdout stderrIgnored
   -> m (Maybe [String])
-readProcessLines pc = do
-  withProcess (setStdout byteStringOutput $ pc) $ \p -> do
-    (ec, bl) <- atomically $
-      liftM2 (,)
-       ( waitExitCodeSTM p )
-       ( getStdout p )
-    case (ec, decodeUtf8' . BL.toStrict $ bl) of
-      (ExitSuccess, Right txt) ->
-        return . Just . RIO.map Text.unpack $ Text.lines txt
-      _ ->
-        return Nothing
+readProcessLines pc = withProcess
+  (setCreateGroup True . setStdout byteStringOutput $ pc)
+  ( \p ->
+      onException
+      ( processHandler p )
+      ( liftIO $ interruptProcessGroupOf (unsafeProcessHandle p) )
+  )
+  where
+    processHandler p = do
+      (ec, bl) <- atomically $
+        liftM2 (,) ( waitExitCodeSTM p ) ( getStdout p )
+      case (ec, decodeUtf8' . BL.toStrict $ bl) of
+        (ExitSuccess, Right txt) ->
+          return . Just . RIO.map Text.unpack $ Text.lines txt
+        _ ->
+          return Nothing
+
 
 readProcessJSON ::
   (MonadIO m, FromJSON a)

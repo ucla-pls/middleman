@@ -228,6 +228,20 @@ finishWork workId success = do
 
   DB.inDB ( DB.finishWorkWithResult workId result )
 
+  logDebug $ "Setting " <> display workId <> " to " <> displayShow success
+    <> " at "
+    <> ( display . Text.pack $
+          formatTime
+          defaultTimeLocale
+          (iso8601DateFormat (Just "%H:%M:%S"))
+          time )
+    <> " a total of "
+    <> display
+    ( realToFrac (time `diffUTCTime` DB.workDetailsStarted w)
+         :: Double
+    )
+    <> " seconds."
+
 listWork ::
   DB.WorkQuery -> Server m [DB.Entity DB.Work]
 listWork query = do

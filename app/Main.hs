@@ -84,7 +84,7 @@ main = do
 
   lo <- logOptionsHandle stderr (view optionsVerbose options_)
   pc <- mkDefaultProcessContext
-  withLogFunc lo $ \lf ->
+  withLogFunc (setLogUseLoc False lo) $ \lf ->
     let app = App
           { appLogFunc = lf
           , appProcessContext = pc

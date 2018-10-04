@@ -12,12 +12,12 @@ module Middleman.Worker
   where
 
 
+
 -- rio
 import RIO.Process
 import RIO.List as List
 import qualified RIO.Text as Text
 import qualified RIO.ByteString.Lazy as BL
-
 
 -- sysinfo
 import           System.SysInfo
@@ -85,7 +85,7 @@ workerApp = do
         drv = jobDescriptionDerivation jd
         timelimit = groupTimeout . entityVal $ workDetailsGroup
 
-      logDebug $ "Got work from server " <> display workDetailsId
+      logInfo $ "Got work from server " <> display workDetailsId
       dispatch pool $ do
         logDebug $ "Running " <> display workDetailsId
         ( do
@@ -107,8 +107,7 @@ workerApp = do
           ) `withException` (
           \(e :: SomeException) -> do
             logError $ display workDetailsId
-              <> " was rudely interrupted."
-            logError $ displayShow e
+              <> " was rudely interrupted by " <> displayShow e <> ", retrying it."
             Client.finishWork workDetailsId Retry
           )
   where
