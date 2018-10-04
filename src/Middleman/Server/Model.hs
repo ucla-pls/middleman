@@ -16,6 +16,7 @@ module Middleman.Server.Model
   , migrateDB
 
   -- * Group
+  , GroupQuery (..)
   , Group (..)
   , GroupId
   , createGroup
@@ -24,6 +25,7 @@ module Middleman.Server.Model
   , recursivelyDeleteGroup
 
   -- * JobDescription
+  , JobDescriptionQuery (..)
   , JobDescription (..)
   , JobDescriptionId
   , upsertJobDescription
@@ -32,18 +34,21 @@ module Middleman.Server.Model
   , listJobDescriptions
 
   -- * Job
+  , JobQuery (..)
   , Job (..)
   , JobId
   , createJob
   , listJobs
 
   -- * Worker
+  , WorkerQuery (..)
   , Worker (..)
   , WorkerId
   , listWorkers
   , upsertWorker
 
   -- * Work
+  , WorkQuery (..)
   , Work (..)
   , WorkId
   , createWork
@@ -162,10 +167,14 @@ createGroup ::
 createGroup grp = do
   P.insertUniqueEntity grp `orFail` ItemAlreadyExists grp
 
+data GroupQuery = GroupQuery
+  { hasName :: Maybe Text
+  } deriving (Show, Eq)
+
 listGroups ::
-  Maybe Text -> DB [Entity Group]
-listGroups mname = do
-  let query = maybe [] (\name -> [ GroupName P.==. name ]) mname
+  GroupQuery -> DB [Entity Group]
+listGroups (GroupQuery{..}) = do
+  let query = maybe [] (\name -> [ GroupName P.==. name ]) hasName
   P.selectList query [ P.Asc GroupName ]
 
 findGroup ::
@@ -197,9 +206,13 @@ findJobDescription ::
 findJobDescription jobDId =
   P.getEntity jobDId
 
+data JobDescriptionQuery = JobDescriptionQuery
+  {} deriving (Show, Eq)
+
 listJobDescriptions ::
-  DB [ Entity JobDescription ]
-listJobDescriptions =
+  JobDescriptionQuery
+  -> DB [ Entity JobDescription ]
+listJobDescriptions _ =
   P.selectList [] []
 
 createJob ::
@@ -207,16 +220,26 @@ createJob ::
 createJob job =
   P.insertUniqueEntity job `orFail` ItemAlreadyExists job
 
+data JobQuery = JobQuery
+ { hasJobDescriptionId :: Maybe JobDescriptionId
+ } deriving (Show, Eq)
+
 listJobs ::
-  Maybe JobDescriptionId -> DB [Entity Job]
-listJobs q = do
-  let query = maybe [] (\jd -> [ JobDescId P.==. jd]) q
+  JobQuery -> DB [Entity Job]
+listJobs ( JobQuery {..} ) = do
+  let query =
+        maybe [] (\jd -> [ JobDescId P.==. jd]) hasJobDescriptionId
   P.selectList query []
 
+data WorkerQuery = WorkerQuery
+  { hasWorkerName :: !(Maybe Text)
+  } deriving (Show, Eq)
+
 listWorkers ::
-  Maybe Text -> DB [Entity Worker]
-listWorkers qt = do
-  let query = maybe [] (\name -> [ WorkerName P.==. name ]) qt
+  WorkerQuery -> DB [Entity Worker]
+listWorkers (WorkerQuery {..}) = do
+  let query =
+        maybe [] (\name -> [ WorkerName P.==. name ]) hasWorkerName
   P.selectList query [ P.Asc WorkerName ]
 
 upsertWorker ::
@@ -300,11 +323,13 @@ finishWorkWithResult workId result= do
       [ JobWorkId P.==. Just workId ]
       [ JobWorkId P.=. Nothing ]
 
-listWork ::
-  DB [Entity Work]
-listWork = do
-  P.selectList [] [ P.Asc WorkStarted ]
+data WorkQuery = WorkQuery
+  deriving (Show, Eq)
 
+listWork ::
+  WorkQuery -> DB [Entity Work]
+listWork (WorkQuery) = do
+  P.selectList [] [ P.Asc WorkStarted ]
 
 -- * Displays for easy handeling
 
@@ -322,3 +347,43 @@ instance Display WorkerId where
 
 instance Display WorkId where
   display i = "Work(" <> display (fromSqlKey i) <> ")"
+
+
+instance Display GroupQuery where
+  display (GroupQuery {..}) =
+    fold $
+    [ "Group Query("
+    , foldMap (\name -> "has name = " <> display name) hasName
+    , ")"
+    ]
+instance Display JobDescriptionQuery where
+  display (JobDescriptionQuery) =
+    fold $
+    [ "JobDescriptionQuery("
+    , ")"
+    ]
+
+instance Display JobQuery where
+  display (JobQuery{..}) =
+    fold $
+    [ "JobDescriptionQuery("
+    , foldMap (\dscr -> "has job desc. = " <> display dscr)
+        hasJobDescriptionId
+    , ")"
+    ]
+
+instance Display WorkQuery where
+  display (WorkQuery) =
+    fold $
+    [ "WorkQuery("
+    , ")"
+    ]
+
+instance Display WorkerQuery where
+  display (WorkerQuery {..}) =
+    fold $
+    [ "WorkerQuery("
+    , foldMap (\name -> "has name = " <> display name)
+        hasWorkerName
+    , ")"
+    ]

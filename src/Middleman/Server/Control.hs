@@ -17,8 +17,9 @@ module Middleman.Server.Control
 
 -- rio
 import RIO
+import RIO.Time
+import RIO.List as List
 import RIO.Text as Text
-import RIO.FilePath
 import RIO.Process
 import RIO.Time (getCurrentTime)
 
@@ -29,39 +30,48 @@ import Nix.Tools as Nix
 
 -- * Server interface
 
-type Server m a =
-  forall env.
+type Server env a =
+  forall m.
   ( MonadReader env m
-  , Nix.HasGCRoot env
-  , DB.HasSqlPool env
   , HasLogFunc env
-  , HasProcessContext env
+  , DB.HasSqlPool env
   , MonadUnliftIO m
   ) => m a
 
--- * Job Creation
+-- * Groups
 
 -- | List Groups
 listGroups ::
-  Maybe Text -> Server m [DB.Entity DB.Group]
-listGroups mname = do
-  DB.inDB ( DB.listGroups mname )
+  DB.GroupQuery -> Server env [DB.Entity DB.Group]
+listGroups query = do
+  groups <- DB.inDB ( DB.listGroups query )
+  logDebug $
+    "Found " <> display (List.length groups)
+    <> " groups matching query " <> display query <> "."
+  return groups
 
 -- | Find Groups
 findGroup ::
-  DB.GroupId -> Server m (Maybe (DB.Entity DB.Group))
+  DB.GroupId -> Server env (Maybe (DB.Entity DB.Group))
 findGroup groupId = do
-  DB.inDB ( DB.findGroup groupId )
+  egroup <- DB.inDB ( DB.findGroup groupId )
+  logDebug $
+    maybe "Didn't find" (const "Found") egroup
+    <> "when looking for " <> display groupId <> "."
+  return egroup
 
 -- | Create a group of jobs
 createGroup ::
-  DB.Group -> Server m (DB.Entity DB.Group)
-createGroup grp =
-  DB.inDB ( DB.createGroup grp )
+  DB.Group -> Server env (DB.Entity DB.Group)
+createGroup grp = do
+  egroup <- DB.inDB ( DB.createGroup grp )
+  logDebug $ "Created new group " <> display (DB.entityKey egroup) <> "."
+  return egroup
 
 -- | Remove a group and all it's corresponding jobs.
 deleteGroup ::
-  DB.GroupId -> Server m ()
+  (HasGCRoot env)
+  => DB.GroupId -> Server env ()
 deleteGroup groupId = do
   logDebug $ "Deleting group " <> displayShow groupId
   jobs <- DB.inDB ( DB.jobDescriptionsWithGroup groupId)
@@ -76,26 +86,44 @@ deleteGroup groupId = do
 -- | There can only be one job description, per derivation. You will
 -- have to delete any old job descriptions to re-run.
 submitJobDescription ::
-  DB.JobDescription -> Server m (Bool, DB.Entity DB.JobDescription)
+  (HasGCRoot env)
+  => DB.JobDescription
+  -> Server env (Bool, DB.Entity DB.JobDescription)
 submitJobDescription desc = do
+  logDebug $ "Creating gc-roots for "
+    <> displayShow (DB.jobDescriptionDerivation desc)
   Nix.ensureGCRoot
     ( DB.jobDescriptionDerivation desc )
     ( relativeLinkOfJobDescription desc )
   jobDesc <- DB.inDB ( DB.upsertJobDescription desc )
+  logDebug $ "Successfully submitted "
+    <> display (DB.entityKey (snd jobDesc)) <> "."
   return jobDesc
 
 findJobDescription ::
-  DB.JobDescriptionId -> Server m (Maybe (DB.Entity DB.JobDescription))
-findJobDescription descId =
-  DB.inDB ( DB.findJobDescription descId )
+  DB.JobDescriptionId
+  -> Server env (Maybe (DB.Entity DB.JobDescription))
+findJobDescription descId = do
+  edesc <- DB.inDB ( DB.findJobDescription descId )
+  logDebug $
+    maybe "Didn't find" (const "Found") edesc
+    <> "when looking for " <> display descId <> "."
+  return edesc
 
 listJobDescriptions ::
-  Server m [DB.Entity DB.JobDescription]
-listJobDescriptions =
-  DB.inDB ( DB.listJobDescriptions )
+  DB.JobDescriptionQuery
+  -> Server env [DB.Entity DB.JobDescription]
+listJobDescriptions query = do
+  descs <- DB.inDB ( DB.listJobDescriptions query )
+  logDebug $
+    "Found " <> display (List.length descs)
+    <> " job descriptions matching query " <> display query <> "."
+  return descs
 
 publishJob ::
-  DB.JobDescriptionId -> Server m (DB.Entity DB.Job)
+  (HasGCRoot env, HasProcessContext env)
+  => DB.JobDescriptionId
+  -> Server env (DB.Entity DB.Job)
 publishJob descId = do
   (DB.entityVal -> desc) <- findJobDescription descId
     `orFail` ItemNotFoundException descId
@@ -113,43 +141,74 @@ publishJob descId = do
     ( relativeLinkOfJob desc )
 
   -- Creation
-  DB.inDB ( DB.createJob (DB.Job descId Nothing output) )
+  ejob <- DB.inDB ( DB.createJob (DB.Job descId Nothing output) )
+  logDebug $ "Successfully published " <> display descId <> " as "
+    <> display (DB.entityKey ejob) <> "."
+  return ejob
 
 listJobs ::
-  Maybe DB.JobDescriptionId
+  DB.JobQuery
   -> Server m [DB.Entity DB.Job]
-listJobs q = do
-  DB.inDB ( DB.listJobs q )
+listJobs query = do
+  jobs <- DB.inDB ( DB.listJobs query )
+  logDebug $
+    "Found " <> display (List.length jobs)
+    <> " jobs matching query " <> display query <> "."
+  return jobs
 
--- * Work Creation
+-- -- * Work Creation
 
 listWorkers ::
-  Maybe Text -> Server m [DB.Entity DB.Worker]
-listWorkers query =
-  DB.inDB ( DB.listWorkers query )
+  DB.WorkerQuery -> Server env [DB.Entity DB.Worker]
+listWorkers query = do
+  workers <- DB.inDB ( DB.listWorkers query )
+  logDebug $
+    "Found " <> display (List.length workers)
+    <> " workers matching query " <> display query <> "."
+  return workers
 
 -- | Create or update a worker.
 upsertWorker ::
-  DB.Worker -> Server m (DB.Entity DB.Worker)
+  DB.Worker -> Server env (DB.Entity DB.Worker)
 upsertWorker worker = do
-  DB.inDB ( DB.upsertWorker worker )
+  eworker <- DB.inDB ( DB.upsertWorker worker )
+  logDebug $ "Created " <> display (DB.entityKey eworker) <>"."
+  return eworker
 
 -- | Given a WorkerId create work
 startWork ::
-  DB.WorkerId -> Server m (Maybe (DB.Entity DB.Work))
+  DB.WorkerId -> Server env (Maybe (DB.Entity DB.Work))
 startWork workerId = do
   time <- getCurrentTime
-  DB.inDB ( DB.startWorkOnAvailableJob time workerId )
+  work <- DB.inDB ( DB.startWorkOnAvailableJob time workerId )
+  case work of
+    Just w ->
+      logDebug $
+        "Started " <> display (DB.entityKey w)
+        <> " at " <>
+        ( display . Text.pack $
+          formatTime
+          defaultTimeLocale
+          (iso8601DateFormat (Just "%H:%M:%S"))
+          time )
+        <> "."
+    Nothing ->
+      logDebug "No more available jobs found."
+  return work
 
 -- | Given a `DB.WorkId` find the neseary information to compute it.
 findWorkDetails ::
   DB.WorkId -> Server m (Maybe DB.WorkDetails)
 findWorkDetails workId = do
+  logDebug $ "Finding work details for " <> display workId <> "."
   DB.inDB ( DB.findWorkDetails workId )
 
 -- | Complete work
 finishWork ::
-  DB.WorkId -> DB.Success -> Server m ()
+  (HasGCRoot env)
+  => DB.WorkId
+  -> DB.Success
+  -> Server env ()
 finishWork workId success = do
   time <- getCurrentTime
   let result = DB.Result time success
@@ -170,9 +229,13 @@ finishWork workId success = do
   DB.inDB ( DB.finishWorkWithResult workId result )
 
 listWork ::
-  Server m [DB.Entity DB.Work]
-listWork =
-  DB.inDB DB.listWork
+  DB.WorkQuery -> Server m [DB.Entity DB.Work]
+listWork query = do
+  work <- DB.inDB ( DB.listWork query )
+  logDebug $
+    "Found " <> display (List.length work)
+    <> " work matching query " <> display query <> "."
+  return work
 
 -- -- ** Others
 

@@ -91,15 +91,19 @@ workerApp = do
         ( do
             result <- performJob timelimit drv
             case result of
-              Just output -> do
+              Right output -> do
                 logInfo $ display workDetailsId
                   <> " completed successfully."
                 Nix.copyToStore (infoStoreUrl info) [output]
                 Client.finishWork workDetailsId Succeded
-              Nothing -> do
+              Left True -> do
                 logError $ display workDetailsId
                   <> " timed out after " <> display timelimit <> "."
                 Client.finishWork workDetailsId Timeout
+              Left False -> do
+                logError $ display workDetailsId
+                  <> " failed."
+                Client.finishWork workDetailsId Failed
           ) `withException` (
           \(e :: SomeException) -> do
             logError $ display workDetailsId
@@ -139,15 +143,16 @@ performJob ::
   -- ^ Timelimit in seconds
   -> Derivation
   -- ^ Derivation name
-  -> RIO env (Maybe OutputPath)
+  -> RIO env (Either Bool OutputPath)
 performJob timelimit drv = do
   threadId <- myThreadId
   succ <- timeout (seconds timelimit)
     $ Nix.realizeDerivation drv
           ("middleman-link/" ++ show threadId)
-  return $ case join succ of
-    Just [fp] -> Just fp
-    _ -> Nothing
+  return $ case succ of
+    Just (Just [fp]) -> Right fp
+    Nothing -> Left True
+    _ -> Left False
 
 -- * Regulator
 

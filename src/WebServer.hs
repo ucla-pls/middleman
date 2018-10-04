@@ -1,140 +1,140 @@
 module WebServer where
 
-import           Import                    hiding ((<.>))
+-- import           Import                    hiding ((<.>))
 
--- base
-import qualified Data.Map as Map
+-- -- base
+-- import qualified Data.Map as Map
 
--- persit
-import qualified Database.Persist.Sql as DB
-import qualified Database.Esqueleto as E
+-- -- persit
+-- import qualified Database.Persist.Sql as DB
+-- import qualified Database.Esqueleto as E
 
--- rio
-import qualified RIO.ByteString.Lazy            as BL
-import qualified RIO.Text.Lazy            as TL
-import qualified RIO.Text as Text
-import RIO.Process
-import RIO.Directory
+-- -- rio
+-- import qualified RIO.ByteString.Lazy            as BL
+-- import qualified RIO.Text.Lazy            as TL
+-- import qualified RIO.Text as Text
+-- import RIO.Process
+-- import RIO.Directory
 
--- scotty
-import           Web.Scotty.Trans
+-- -- scotty
+-- import           Web.Scotty.Trans
 
--- dhall
-import qualified Dhall
+-- -- dhall
+-- import qualified Dhall
 
--- middleman
-import Model
-import Data.Success
+-- -- middleman
+-- import Model
+-- import Data.Success
 
--- | The webserver of the api
-webserver ::
-  (HasSqlPool env)
-  => ScottyT TL.Text (RIO env) ()
-webserver = do
-  get "/" $ do
-    frontpage
-  get "/index.html" $ do
-    frontpage
-
-
-data ActiveJobs = ActiveJobs
-  { succeded :: Natural
-  , failed :: Natural
-  , running :: Natural
-  , total :: Natural
-  , psucceded :: Double
-  , pfailed :: Double
-  , prunning :: Double
-  } deriving (Generic, Show)
-
-instance Dhall.Inject ActiveJobs
-
-data FrontPage = FrontPage
-  { activeJobs :: ActiveJobs
-  , workers :: [MWorker]
-  } deriving (Generic, Show)
-
-instance Dhall.Inject FrontPage
-
-data MWorker = MWorker
-  { hostname :: Text
-  , workerActiveJobs :: Natural
-  } deriving (Generic, Show)
-
-instance Dhall.Inject MWorker
+-- -- | The webserver of the api
+-- webserver ::
+--   (HasSqlPool env)
+--   => ScottyT TL.Text (RIO env) ()
+-- webserver = do
+--   get "/" $ do
+--     frontpage
+--   get "/index.html" $ do
+--     frontpage
 
 
-frontpage :: (ScottyError e, HasSqlPool env) => ActionT e (RIO env) ()
-frontpage = do
-  (total, succeded, failed, running) <- lift . runDB $ do
-    total <- DB.count ([] :: [DB.Filter Job])
-    jobs :: [(E.Value (Maybe Success), E.Value (Int))] <-
-      E.select $ E.from $ \(job `E.InnerJoin` work) -> do
-        E.on (job E.^. JobWorkId E.==. E.just (work E.^. WorkId))
-        E.groupBy ( work E.^. WorkSuccess)
-        return (work E.^. WorkSuccess, E.countRows)
+-- data ActiveJobs = ActiveJobs
+--   { succeded :: Natural
+--   , failed :: Natural
+--   , running :: Natural
+--   , total :: Natural
+--   , psucceded :: Double
+--   , pfailed :: Double
+--   , prunning :: Double
+--   } deriving (Generic, Show)
 
-    let sucCount = foldMap (\(E.Value x, E.Value y) -> Map.singleton x y) jobs
+-- instance Dhall.Inject ActiveJobs
 
-    return
-     ( total
-     , Map.findWithDefault 0 (Just Succeded) sucCount
-     , Map.findWithDefault 0 (Just Failed)   sucCount
-     , Map.findWithDefault 0 Nothing         sucCount
-     )
+-- data FrontPage = FrontPage
+--   { activeJobs :: ActiveJobs
+--   , workers :: [MWorker]
+--   } deriving (Generic, Show)
 
-  workers <- lift . runDB $ do
-    E.select $ E.from $ \(worker `E.InnerJoin` work ) -> do
-      E.on (worker E.^. WorkerId E.==. work E.^. WorkWorkerId)
-      E.where_ (E.isNothing $ work E.^. WorkCompleted )
-      E.groupBy (worker E.^. WorkerId)
-      return (worker, E.countRows)
+-- instance Dhall.Inject FrontPage
 
-  let
-    aj = ActiveJobs
-         (fromIntegral succeded)
-         (fromIntegral failed)
-         (fromIntegral running)
-         (fromIntegral total)
-         (fromIntegral succeded / fromIntegral total * 100)
-         (fromIntegral failed / fromIntegral total * 100)
-         (fromIntegral running / fromIntegral total * 100)
+-- data MWorker = MWorker
+--   { hostname :: Text
+--   , workerActiveJobs :: Natural
+--   } deriving (Generic, Show)
 
-    mworkers :: [MWorker]
-    mworkers =
-      map (\(worker, E.Value count) ->
-              (MWorker (Text.pack . workerHostname . DB.entityVal $ worker ) count)
-              ) workers
-
-  serveFile "frontpage.dhall" Dhall.auto $ \f ->
-    f (FrontPage aj mworkers)
+-- instance Dhall.Inject MWorker
 
 
-templateHtml :: (ScottyError e, MonadIO m) => Text -> ActionT e m ()
-templateHtml txt = do
-  t <- liftIO . template $ txt
-  htmlText t
+-- frontpage :: (ScottyError e, HasSqlPool env) => ActionT e (RIO env) ()
+-- frontpage = do
+--   (total, succeded, failed, running) <- lift . runDB $ do
+--     total <- DB.count ([] :: [DB.Filter Job])
+--     jobs :: [(E.Value (Maybe Success), E.Value (Int))] <-
+--       E.select $ E.from $ \(job `E.InnerJoin` work) -> do
+--         E.on (job E.^. JobWorkId E.==. E.just (work E.^. WorkId))
+--         E.groupBy ( work E.^. WorkSuccess)
+--         return (work E.^. WorkSuccess, E.countRows)
 
-serveFile :: (ScottyError e, MonadIO m) => FilePath -> Dhall.Type r -> (r -> Text) -> ActionT e m ()
-serveFile fp tp f = do
-  r <- liftIO $ fromFile fp tp
-  htmlText $ f r
+--     let sucCount = foldMap (\(E.Value x, E.Value y) -> Map.singleton x y) jobs
 
-htmlText :: (ScottyError e, Monad m) => Text -> ActionT e m ()
-htmlText txt = do
-  setHeader "Content-Type" "text/html"
-  raw . BL.fromStrict $ encodeUtf8 txt
+--     return
+--      ( total
+--      , Map.findWithDefault 0 (Just Succeded) sucCount
+--      , Map.findWithDefault 0 (Just Failed)   sucCount
+--      , Map.findWithDefault 0 Nothing         sucCount
+--      )
+
+--   workers <- lift . runDB $ do
+--     E.select $ E.from $ \(worker `E.InnerJoin` work ) -> do
+--       E.on (worker E.^. WorkerId E.==. work E.^. WorkWorkerId)
+--       E.where_ (E.isNothing $ work E.^. WorkCompleted )
+--       E.groupBy (worker E.^. WorkerId)
+--       return (worker, E.countRows)
+
+--   let
+--     aj = ActiveJobs
+--          (fromIntegral succeded)
+--          (fromIntegral failed)
+--          (fromIntegral running)
+--          (fromIntegral total)
+--          (fromIntegral succeded / fromIntegral total * 100)
+--          (fromIntegral failed / fromIntegral total * 100)
+--          (fromIntegral running / fromIntegral total * 100)
+
+--     mworkers :: [MWorker]
+--     mworkers =
+--       map (\(worker, E.Value count) ->
+--               (MWorker (Text.pack . workerHostname . DB.entityVal $ worker ) count)
+--               ) workers
+
+--   serveFile "frontpage.dhall" Dhall.auto $ \f ->
+--     f (FrontPage aj mworkers)
 
 
-fromFile :: FilePath -> Dhall.Type a -> IO a
-fromFile fp tp =
-  withCurrentDirectory "templates" $ do
-    Dhall.inputFrom fp tp =<< readFileUtf8 fp
+-- templateHtml :: (ScottyError e, MonadIO m) => Text -> ActionT e m ()
+-- templateHtml txt = do
+--   t <- liftIO . template $ txt
+--   htmlText t
 
-template :: Text -> IO Text
-template txt = do
-  withCurrentDirectory "templates" $ do
-    let fn = "index.dhall"
-    fs <- readFileUtf8 fn
-    temp <- Dhall.inputFrom fn Dhall.auto fs :: IO (Text -> Text)
-    return $ temp txt
+-- serveFile :: (ScottyError e, MonadIO m) => FilePath -> Dhall.Type r -> (r -> Text) -> ActionT e m ()
+-- serveFile fp tp f = do
+--   r <- liftIO $ fromFile fp tp
+--   htmlText $ f r
+
+-- htmlText :: (ScottyError e, Monad m) => Text -> ActionT e m ()
+-- htmlText txt = do
+--   setHeader "Content-Type" "text/html"
+--   raw . BL.fromStrict $ encodeUtf8 txt
+
+
+-- fromFile :: FilePath -> Dhall.Type a -> IO a
+-- fromFile fp tp =
+--   withCurrentDirectory "templates" $ do
+--     Dhall.inputFrom fp tp =<< readFileUtf8 fp
+
+-- template :: Text -> IO Text
+-- template txt = do
+--   withCurrentDirectory "templates" $ do
+--     let fn = "index.dhall"
+--     fs <- readFileUtf8 fn
+--     temp <- Dhall.inputFrom fn Dhall.auto fs :: IO (Text -> Text)
+--     return $ temp txt

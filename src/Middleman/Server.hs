@@ -52,7 +52,12 @@ import Nix.Types (Store)
 import Middleman.Server.Control
 import Middleman.Server.Exception
 import Middleman.DTO as DTO
-import Middleman.Server.Model (HasSqlPool(..), migrateDB, Entity(..))
+import Middleman.Server.Model (HasSqlPool(..), migrateDB
+                              , WorkQuery (..)
+                              , WorkerQuery (..)
+                              , JobDescriptionQuery (..)
+                              , JobQuery (..)
+                              , GroupQuery (..))
 
 -- * ServerOptions
 
@@ -107,22 +112,16 @@ server ops = ask >>= \a ->
         env <- ask
         scottyT port (runRIO env) serverDescription
 
-serverDescription ::
-  HasServerOptions env => API env
+serverDescription :: API
 serverDescription = do
   middleware (Network.Wai.Middleware.RequestLogger.logStdout)
   api
   -- webserver
 
-type API env =
-  ( HasSqlPool env
-  , HasGCRoot env
-  , HasLogFunc env
-  , HasProcessContext env)
-  => ScottyT TL.Text (RIO env) ()
+type API = ScottyT TL.Text (RIO ServerApp) ()
 
 -- | The api of the server
-api :: HasServerOptions env => API env
+api :: API
 api = do
   get "/api" $ do
     storeurl <- lift . view $ serverOptions . sopsStoreUrl
@@ -135,11 +134,11 @@ api = do
   workersPaths
   workPaths
 
-groupPaths :: API env
+groupPaths :: API
 groupPaths = do
   get "/api/groups" $ do
     withName <- maybeParam "name"
-    grps <- lift $ listGroups withName
+    grps <- lift $ listGroups (GroupQuery withName)
     json grps
 
   post "/api/groups/" $ do
@@ -163,7 +162,7 @@ groupPaths = do
     lift $ deleteGroup groupId
     status ok200
 
-jobDescriptionPaths :: API env
+jobDescriptionPaths :: API
 jobDescriptionPaths = do
   post "/api/job-descriptions/" $ do
     descs :: [JobDescription] <- jsonData `rescue` const next
@@ -182,7 +181,7 @@ jobDescriptionPaths = do
       status forbidden403
 
   get "/api/job-descriptions/" $ do
-    json =<< lift listJobDescriptions
+    json =<< lift ( listJobDescriptions JobDescriptionQuery )
 
   get "/api/job-descriptions/:id" $ do
     jobDescId <- param "id"
@@ -190,7 +189,7 @@ jobDescriptionPaths = do
 
   get "/api/job-descriptions/:id/job" $ do
     jobDescId <- param "id"
-    findOrFail ( List.headMaybe <$> listJobs (Just jobDescId) )
+    findOrFail ( List.headMaybe <$> listJobs (JobQuery (Just jobDescId)))
 
   post "/api/job-descriptions/:id/publish" $ do
     jobDescId <- param "id"
@@ -211,17 +210,17 @@ jobDescriptionPaths = do
         status created201
         json job
 
-jobPaths :: API env
+jobPaths :: API
 jobPaths = do
   get "/api/jobs/" $ do
     desc <- maybeParam "desc"
-    json =<< lift ( listJobs desc )
+    json =<< lift ( listJobs (JobQuery desc) )
 
-workersPaths :: API env
+workersPaths :: API
 workersPaths = do
   get "/api/workers" $ do
     withName <- maybeParam "name"
-    json =<< lift ( listWorkers withName )
+    json =<< lift ( listWorkers (WorkerQuery withName))
 
   post "/api/workers/" $ do
     name <- newWorkerName <$> jsonData
@@ -245,10 +244,10 @@ workersPaths = do
       Nothing ->
         status status204
 
-workPaths :: API env
+workPaths :: API
 workPaths = do
   get "/api/work/" $ do
-    json =<< lift ( listWork )
+    json =<< lift ( listWork (WorkQuery))
 
   get "/api/work/:workId" $ do
     workId <- param "workId"

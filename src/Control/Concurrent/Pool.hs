@@ -12,7 +12,6 @@ module Control.Concurrent.Pool
 import  Prelude
 import           Control.Monad
 import           Control.Concurrent
-import           Data.Foldable
 import Data.Semigroup
 import qualified Data.Set as Set
 
