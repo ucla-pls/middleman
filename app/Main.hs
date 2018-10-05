@@ -43,6 +43,9 @@ main = do
          <*> option str
          (long "gc-root"
           <> help "The directory to place the gc-roots")
+         <*> option str
+         (long "templates" <> value "templates"
+          <> help "The templates directory")
         )
       addCommand "work"
         "Try to get work on the server"

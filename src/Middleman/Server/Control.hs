@@ -57,7 +57,7 @@ findGroup groupId = do
   egroup <- DB.inDB ( DB.findGroup groupId )
   logDebug $
     maybe "Didn't find" (const "Found") egroup
-    <> "when looking for " <> display groupId <> "."
+    <> " a group when looking for " <> display groupId <> "."
   return egroup
 
 -- | Create a group of jobs
@@ -82,6 +82,19 @@ deleteGroup groupId = do
   logDebug $ "Recursively deleting group"
   DB.inDB ( DB.recursivelyDeleteGroup groupId )
   logDebug $ "done"
+
+retryOldGroup ::
+  DB.GroupId -> Server env Int
+retryOldGroup gid = do
+  i <- findGroup gid >>= \case
+    Just (DB.groupTimeout . DB.entityVal -> to') -> do
+      t <- getCurrentTime
+      let startTime = addUTCTime (realToFrac $ negate to') t
+      DB.inDB ( DB.retryOldJobs gid startTime )
+    Nothing ->
+      return 0
+  logDebug $ "Retrying " <> display i <> " old jobs."
+  return i
 
 -- | There can only be one job description, per derivation. You will
 -- have to delete any old job descriptions to re-run.
@@ -155,6 +168,25 @@ listJobs query = do
     "Found " <> display (List.length jobs)
     <> " jobs matching query " <> display query <> "."
   return jobs
+
+-- retryJob ::
+--   DB.JobQuery
+--   -> Server m [DB.Entity DB.Job]
+-- retryJob query = do
+--   jobs <- DB.inDB ( DB.retryJobs query )
+--   logDebug $
+--     "Found " <> display (List.length jobs)
+--     <> " jobs matching query " <> display query <> "."
+--   return jobs
+
+jobSummary ::
+  DB.JobQuery
+  -> Server m DB.JobSummary
+jobSummary query = do
+  jobsum <- DB.inDB ( DB.jobSummary query )
+  logDebug $
+    "Found a jobs summary."
+  return jobsum
 
 -- -- * Work Creation
 

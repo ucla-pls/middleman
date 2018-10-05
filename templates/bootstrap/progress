@@ -1,16 +1,18 @@
 let h = ../html/package.dhall in
 let List/map = http://prelude.dhall-lang.org/List/map in
-let ProgressBar = { class : Text, progress : Double } in
 let
-  progressbar = \( bar : ProgressBar ) ->
+  progressbar = \( bar : ../type/ProgressBar ) ->
     h.div
-    [ h.class "progress-bar ${bar.class}"
+    [ h.class "progress-bar ${bar.pclass}"
     , h.role "progressbar"
-    , h.style "width: ${Double/show bar.progress}%"
+    , h.style "width: ${Double/show bar.pprogress}%"
     , h.attr "aria-valuemin" "0"
-    , h.attr "aria-valuenow" ( Double/show bar.progress )
+    , h.attr "aria-valuenow" ( Double/show bar.pprogress )
     , h.attr "aria-valuemax" "100"
     ] h.nc
 in
-\( bars : List ProgressBar ) ->
-h.div [ h.class "progress" ] (List/map ProgressBar Text progressbar bars)
+\( bars : List ../type/ProgressBar )
+->
+h.div
+  [ h.class "progress" ]
+  (List/map ../type/ProgressBar Text progressbar bars)

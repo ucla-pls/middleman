@@ -50,6 +50,7 @@ import           Import                    hiding ((<.>))
 import Nix.Tools (HasGCRoot(..))
 import Nix.Types (Store)
 import Middleman.Server.Control
+import Middleman.WebServer
 import Middleman.Server.Exception
 import Middleman.DTO as DTO
 import Middleman.Server.Model (HasSqlPool(..), migrateDB
@@ -65,6 +66,7 @@ data ServerOptions = ServerOptions
   { _sopsConnectionString :: !Text
   , _sopsStoreUrl :: !Store
   , _sopsGCRoot :: !FilePath
+  , _sopsTemplates :: !FilePath
   }
 makeClassy ''ServerOptions
 
@@ -77,6 +79,9 @@ makeLenses ''ServerApp
 
 instance HasOptions ServerApp where
   options = app . Import.options
+
+instance HasTemplates ServerApp where
+  templatesL = serverOptions . sopsTemplates
 
 instance HasServerOptions ServerApp where
   serverOptions = sOptions
@@ -116,7 +121,7 @@ serverDescription :: API
 serverDescription = do
   middleware (Network.Wai.Middleware.RequestLogger.logStdout)
   api
-  -- webserver
+  webserver
 
 type API = ScottyT TL.Text (RIO ServerApp) ()
 
@@ -160,6 +165,11 @@ groupPaths = do
   delete "/api/groups/:groupId" $ do
     groupId <- param "groupId"
     lift $ deleteGroup groupId
+    status ok200
+
+  post "/api/groups/:groupId/retry" $ do
+    groupId <- param "groupId"
+    lift $ retryOldGroup groupId
     status ok200
 
 jobDescriptionPaths :: API

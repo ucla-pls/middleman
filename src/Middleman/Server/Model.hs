@@ -34,11 +34,14 @@ module Middleman.Server.Model
   , listJobDescriptions
 
   -- * Job
-  , JobQuery (..)
   , Job (..)
   , JobId
   , createJob
+  , JobQuery (..)
   , listJobs
+  , JobSummary (..)
+  , jobSummary
+  , retryOldJobs
 
   -- * Worker
   , WorkerQuery (..)
@@ -77,9 +80,10 @@ module Middleman.Server.Model
 
 -- base?
 import Data.Pool
+import qualified Data.Map as Map
 
 -- rio
-import RIO hiding ((^.), on)
+import RIO hiding ((^.), on, set)
 import RIO.Time
 
 -- persist
@@ -231,8 +235,49 @@ listJobs ( JobQuery {..} ) = do
         maybe [] (\jd -> [ JobDescId P.==. jd]) hasJobDescriptionId
   P.selectList query []
 
+retryOldJobs ::
+  GroupId -> UTCTime -> DB Int
+retryOldJobs gid before =
+  fmap fromIntegral $ rawExecuteCount
+    "UPDATE job SET work_id =DEFAULT FROM job as j INNER JOIN work as w ON j.work_id = w.id INNER JOIN job_description as jd ON j.desc_id = jd.id WHERE (jd.group_id = ? AND j.id = job.id AND w.started < ? AND w.result_id IS NULL)"
+    [ PersistInt64 (fromSqlKey gid), PersistUTCTime before ]
+
+data JobSummary = JobSummary
+  { jobSActive :: Int
+  , jobSSuccess :: Int
+  , jobSTimeout :: Int
+  , jobSFailed :: Int
+  , jobSWaiting :: Int
+  } deriving (Show, Eq)
+
+jobSummary ::
+  JobQuery
+  -> DB JobSummary
+jobSummary _ = do
+  jobs <- select $ from $ \((job `LeftOuterJoin` work) `LeftOuterJoin` result) -> do
+    on ( work ?. WorkResultId ==. just (result ?. ResultId) )
+    on ( job ^. JobWorkId ==. work ?. WorkId )
+    groupBy ( job ^. JobWorkId ==. work ?. WorkId, result ?. ResultSuccess )
+    return ( just (job ^. JobWorkId ==. work ?. WorkId)
+           , result ?. ResultSuccess
+           , countRows)
+
+  let sucCount =
+        foldMap (\(Value run, Value succ, Value c) ->
+                   Map.singleton (maybe False (const True) run, succ) c)
+        jobs
+
+  return $ JobSummary
+    { jobSActive  = Map.findWithDefault 0 (True, Nothing) sucCount
+    , jobSSuccess = Map.findWithDefault 0 (True, Just Succeded) sucCount
+    , jobSTimeout  = Map.findWithDefault 0 (True, Just Timeout) sucCount
+    , jobSFailed = Map.findWithDefault 0 (True, Just Failed) sucCount
+    , jobSWaiting = Map.findWithDefault 0 (False, Nothing) sucCount
+    }
+
+
 data WorkerQuery = WorkerQuery
-  { hasWorkerName :: !(Maybe Text)
+  { hasWorkerName :: Maybe Text
   } deriving (Show, Eq)
 
 listWorkers ::
