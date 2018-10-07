@@ -77,41 +77,51 @@ workerApp = do
     <*> view wopsRegulateTime
     <*> pure False
 
-  runPool ps $ \pool -> foreverWaitForServer $ do
-    logDebug $ "Waiting for work..."
-    waitForActivePool pool
-    safePullWork workerId $ \(WorkDetails {..})-> do
+  runForever <- view wopsForever
+
+  if runForever
+    then
+      runPool ps $ \pool -> foreverWaitForServer $ do
+        logDebug $ "Waiting for work..."
+        waitForActivePool pool
+        safePullWork workerId
+          ( dispatch pool . runWork info )
+    else
+      safePullWork workerId (runWork info)
+
+  where
+
+    runWork info (WorkDetails {..}) = do
       let
         jd = entityVal workDetailsJobDescription
         drv = jobDescriptionDerivation jd
         timelimit = groupTimeout . entityVal $ workDetailsGroup
 
       logInfo $ "Got work from server " <> display workDetailsId
-      dispatch pool $ do
-        logDebug $ "Running " <> display workDetailsId
-        ( do
-            result <- performJob timelimit drv
-            case result of
-              Right output -> do
-                logInfo $ display workDetailsId
-                  <> " completed successfully."
-                Nix.copyToStore (infoStoreUrl info) [output]
-                Client.finishWork workDetailsId Succeded
-              Left True -> do
-                logError $ display workDetailsId
-                  <> " timed out after " <> display timelimit <> "."
-                Client.finishWork workDetailsId Timeout
-              Left False -> do
-                logError $ display workDetailsId
-                  <> " failed."
-                Client.finishWork workDetailsId Failed
-          ) `withException` (
-          \(e :: SomeException) -> do
-            logError $ display workDetailsId
-              <> " was rudely interrupted by " <> displayShow e <> ", retrying it."
-            Client.finishWork workDetailsId Retry
-          )
-  where
+      logDebug $ "Running " <> display workDetailsId
+      ( do
+          result <- performJob timelimit drv
+          case result of
+            Right output -> do
+              logInfo $ display workDetailsId
+                <> " completed successfully."
+              Nix.copyToStore (infoStoreUrl info) [output]
+              Client.finishWork workDetailsId Succeded
+            Left True -> do
+              logError $ display workDetailsId
+                <> " timed out after " <> display timelimit <> "."
+              Client.finishWork workDetailsId Timeout
+            Left False -> do
+              logError $ display workDetailsId
+                <> " failed."
+              Client.finishWork workDetailsId Failed
+        ) `withException` (
+        \(e :: SomeException) -> do
+          logError $ display workDetailsId
+            <> " was rudely interrupted by " <> displayShow e <> ", retrying it."
+          Client.finishWork workDetailsId Retry
+        )
+
     safePullWork workerId fm =
       bracketOnError (Client.pullWork workerId)
         ( maybe (return ())
@@ -122,15 +132,12 @@ workerApp = do
         ( maybe waitForInput fm )
 
     foreverWaitForServer m = do
-      runForever <- view wopsForever
-      if runForever
-      then forever $ catch m $ \case
+      forever $ catch m $ \case
           HttpException e -> do
             logError (displayShow e)
             waitForInput
           e -> do
             throwIO e
-      else m
 
     waitForInput = do
       let delay = 10.0
