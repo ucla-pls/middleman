@@ -9,9 +9,6 @@ Description : Tools for interacting with Nix
 module Nix.Tools
   where
 
--- process
-import System.Process (interruptProcessGroupOf)
-
 -- lens
 import Control.Lens ((^?))
 
@@ -83,11 +80,10 @@ realizeDerivation ::
 realizeDerivation drv root = do
   result <- proc "nix-store"
     [ "-j", "1"
-    , "-r", inStore drv
+    , "-Q", "-r", inStore drv
     , "--add-root", root
     , "--indirect" ]
     $ readProcessLines
-    . setStderr closed
   case result of
     Just fps -> do
       paths <- mapM canonicalizePath fps
@@ -161,25 +157,23 @@ runSilentProcess =
   . setStdin closed
 
 readProcessLines ::
-  MonadUnliftIO m
+  (MonadReader env m, MonadUnliftIO m, HasLogFunc env)
   => ProcessConfig stdin stdout stderrIgnored
   -> m (Maybe [String])
-readProcessLines pc = withProcess
-  (setCreateGroup True . setStdout byteStringOutput $ pc)
-  ( \p ->
-      onException
-      ( processHandler p )
-      ( liftIO $ interruptProcessGroupOf (unsafeProcessHandle p) )
-  )
-  where
-    processHandler p = do
-      (ec, bl) <- atomically $
-        liftM2 (,) ( waitExitCodeSTM p ) ( getStdout p )
-      case (ec, decodeUtf8' . BL.toStrict $ bl) of
-        (ExitSuccess, Right txt) ->
-          return . Just . RIO.map Text.unpack $ Text.lines txt
-        _ ->
-          return Nothing
+readProcessLines pc =
+  readProcess (setCreateGroup True $ pc) >>= \case
+    (ExitSuccess, decodeUtf8' . BL.toStrict -> Right txt, _) ->
+      return . Just . RIO.map Text.unpack $ Text.lines txt
+    (ec, _, x) -> do
+      -- TODO
+      logError $ "Process failed with " <> displayShow ec
+      case decodeUtf8' . BL.toStrict $ x of
+        Right txt ->
+          forM_ (Text.lines txt) $ \line -> do
+            logError $ "[stderr]: " <> display line
+        Left err ->
+          logError $ "Failed reading the output of failed call: " <> displayShow err
+      return Nothing
 
 
 readProcessJSON ::
