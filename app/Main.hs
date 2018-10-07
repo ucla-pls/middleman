@@ -66,6 +66,7 @@ main = do
                   <> help "Regulate the memory every time."
                 )
               )
+          <*> ( switch ( long "forever" <> help "Run the worker forever"))
         )
 
       addCommand "push"

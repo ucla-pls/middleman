@@ -42,6 +42,7 @@ data WorkerOptions = WorkerOptions
   , _wopsMaxJobs :: !Int
   , _wopsFreeMemory :: !(Maybe (Double, Double))
   , _wopsRegulateTime :: !Rational
+  , _wopsForever :: !Bool
   }
 
 makeClassy ''WorkerOptions
@@ -120,13 +121,16 @@ workerApp = do
           ))
         ( maybe waitForInput fm )
 
-    foreverWaitForServer m =
-      forever . catch m $ \case
-        HttpException e -> do
-          logError (displayShow e)
-          waitForInput
-        e -> do
-          throwIO e
+    foreverWaitForServer m = do
+      runForever <- view wopsForever
+      if runForever
+      then forever $ catch m $ \case
+          HttpException e -> do
+            logError (displayShow e)
+            waitForInput
+          e -> do
+            throwIO e
+      else m
 
     waitForInput = do
       let delay = 10.0
