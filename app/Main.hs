@@ -1,6 +1,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Main (main) where
 
+import System.Environment
+
 import Import hiding (argument)
 import Run
 import RIO.Process
@@ -10,6 +12,7 @@ import qualified Paths_middleman
 
 main :: IO ()
 main = do
+  username <- getEnv "USER"
   (options_, mode) <- simpleOptions
     $(simpleVersion Paths_middleman.version)
     "middleman"
@@ -28,7 +31,34 @@ main = do
          <> value 3000
        )
     ) $ do
+      addStart username
+      addWork
+      addPush
 
+  lo <- logOptionsHandle stderr (view optionsVerbose options_)
+  pc <- mkDefaultProcessContext
+  withLogFunc (setLogUseLoc False lo) $ \lf ->
+    let app = App
+          { appLogFunc = lf
+          , appProcessContext = pc
+          , appOptions = options_
+          }
+     in runRIO app $ run mode
+
+
+  where
+    parseServer =
+      Server
+      <$> option str
+      (long "server" <> value "localhost" <> showDefault
+        <> help "The url of the server")
+      <*> option auto
+      (long "port" <> value 3000 <> showDefault
+        <> help "The server port")
+
+
+
+    addStart username =
       addCommand "start"
         "Start the server"
         ModeServer
@@ -42,11 +72,16 @@ main = do
           <> help "The url to the store, should be pointing to the server itself")
          <*> option str
          (long "gc-root"
-          <> help "The directory to place the gc-roots")
+          <> help "The directory to place the gc-roots"
+          <> value ( "/nix/var/nix/gcroots/per-user/" ++ username )
+          <> showDefault )
          <*> option str
          (long "templates" <> value "templates"
           <> help "The templates directory")
         )
+
+
+    addWork =
       addCommand "work"
         "Try to get work on the server"
         ModeWorker
@@ -69,6 +104,7 @@ main = do
           <*> ( switch ( long "forever" <> help "Run the worker forever"))
         )
 
+    addPush =
       addCommand "push"
         "Try to push a derivation onto the server"
         ModePush
@@ -85,24 +121,3 @@ main = do
                 )
             )
         )
-
-  lo <- logOptionsHandle stderr (view optionsVerbose options_)
-  pc <- mkDefaultProcessContext
-  withLogFunc (setLogUseLoc False lo) $ \lf ->
-    let app = App
-          { appLogFunc = lf
-          , appProcessContext = pc
-          , appOptions = options_
-          }
-     in runRIO app $ run mode
-
-
-  where
-    parseServer =
-      Server
-      <$> option str
-      (long "server" <> value "localhost" <> showDefault
-        <> help "The url of the server")
-      <*> option auto
-      (long "port" <> value 3000 <> showDefault
-        <> help "The server port")

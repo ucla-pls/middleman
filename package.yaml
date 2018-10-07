@@ -49,8 +49,8 @@ dependencies:
 - unliftio
 - containers
 - sysinfo >= 0.1.1
-- dhall >= 1.15.1
 - process >= 1.6.3.0
+- blaze-html >= 0.9.1.1
 
 ghc-options:
 - -Wall

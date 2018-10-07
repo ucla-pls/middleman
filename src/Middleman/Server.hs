@@ -169,7 +169,7 @@ groupPaths = do
 
   post "/api/groups/:groupId/retry" $ do
     groupId <- param "groupId"
-    lift $ retryOldGroup groupId
+    _ <- lift $ retryOldGroup groupId
     status ok200
 
 jobDescriptionPaths :: API
