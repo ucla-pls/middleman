@@ -5,7 +5,7 @@ in builtins.map (i: pkgs.stdenv.mkDerivation {
   phases = "installPhase";
   inputs = with pkgs; [ python jq httpie ];
   installPhase = ''
-    sleep 22
+    sleep 23
     echo 'hello-${i}' >$out
   '';
 }) ["1" "2" "3" "4" "5" "6" "7" "8" "9" "10"]
