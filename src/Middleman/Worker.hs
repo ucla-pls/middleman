@@ -12,15 +12,15 @@ module Middleman.Worker
   where
 
 
+-- base
+import qualified Data.Map as Map
+import Text.Read
 
 -- rio
 import RIO.Process
 import RIO.List as List
 import qualified RIO.Text as Text
 import qualified RIO.ByteString.Lazy as BL
-
--- sysinfo
-import           System.SysInfo
 
 -- http-client
 import Network.HTTP.Client
@@ -174,16 +174,23 @@ mkRegulators =
   maybe [] ((:[]) . outOfMemoryRegulator)
   where
     outOfMemoryRegulator (freeLower, freeUpper) = Regulator $ do
-      liftIO sysInfo >>= \case
-        Right sys -> do
+      liftIO ( tryAny $ readFileUtf8 "/proc/meminfo" ) >>= \case
+        Right txt -> do
           let
-            free = 100.0 *
-              (fromIntegral $ freeram sys) / (fromIntegral $ totalram sys)
+            res = Map.fromList
+              . map (over _2 (read . Text.unpack . Text.takeWhile numbers . Text.dropWhile (not . numbers)))
+              . map (Text.span (/= ':'))
+              $ Text.lines txt
+
+            totalram = Map.findWithDefault (0 :: Double) "MemTotal" res
+            availableram = Map.findWithDefault (0 :: Double) "MemAvailable" res
+          let
+            free = 100.0 * (availableram / totalram)
             comparation = compareRange free (freeLower, freeUpper)
           logDebug $ "Running memory regulator, found free "
             <> display free
             <> " is " <> displayShow comparation
-            <> " in range " <> display freeLower <> "to" <> display freeUpper
+            <> " in range " <> display freeLower <> " to " <> display freeUpper
           return comparation
         Left _ -> do
           logError "Cannot find sysInfo on system"
@@ -195,6 +202,9 @@ mkRegulators =
       | otherwise = EQ
 
 
+    inText txt c = Text.any (== c) txt
+
+    numbers = inText "0123456789"
 
 -- * Exceptions
 
