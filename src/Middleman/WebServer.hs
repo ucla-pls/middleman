@@ -10,6 +10,10 @@ Description : A simple web frontend
 -}
 module Middleman.WebServer (webserver, HasTemplates(..)) where
 
+-- base
+import Data.Monoid
+import Text.Printf
+
 -- rio
 import RIO.Time
 -- import qualified RIO.ByteString.Lazy as BL
@@ -95,15 +99,24 @@ index = do
   groups <- lift $ listGroupDetails (DB.GroupQuery Nothing)
 
   now <- getCurrentTime
-  let anhourago = addUTCTime (-3600) now
+  tz <- getCurrentTimeZone
+  let
+    anhourago = addUTCTime (-3600 ) now
+    adayago = addUTCTime (-3600 * 24) now
 
-  workers <- lift $ listWorkerDetails anhourago (DB.WorkerQuery Nothing)
+  workers <- lift $ listWorkerDetails adayago (DB.WorkerQuery Nothing)
 
   let js@(DB.JobSummary {..}) = DB.sumJobSummary $ Import.map (DB.groupDJobSummary) groups
+
+  let Sum pace = foldMap
+       (foldMap (\(s, _) -> if s > anhourago then Sum 1 else Sum 0)
+        . DB.workerDCompletedJobs) workers
 
   let
     total = jobSFailed + jobSActive + jobSTimeout + jobSWaiting + jobSSuccess
     done = jobSFailed + jobSSuccess + jobSTimeout
+    remaining :: Double = (fromIntegral (jobSWaiting + jobSActive) / pace) * 3600
+    estdone = addUTCTime (realToFrac remaining) now
 
   template $ do
     h3 "Overview"
@@ -115,26 +128,39 @@ index = do
 
       jobSummaryProgress (js)
 
-      hr
-
-      forM_ groups $ \( DB.GroupDetails {..}) -> do
+      when (pace > 0.1) $ do
         div ! class_ "d-flex w-100 justify-content-between" $ do
-          h5 ( toHtml $ groupDName )
-          small $ "timeout : " <> toHtml (groupDTimeout)
-        jobSummaryProgress groupDJobSummary
+          small (toHtml pace <> " per hour")
+          small $ (toHtml $ formatTime
+                 defaultTimeLocale "%F %H:%M"
+                 (utcToZonedTime tz estdone))
+          small (toHtml (printf "%.2f" $ remaining / 3600 :: String) <> " hours")
+
+    hr
+
+    h3 "Groups"
+
+    div ! class_ "list-group" $ do
+      forM_ groups $ \( DB.GroupDetails {..}) -> do
+        a ! class_ "list-group-item list-group-item-action flex-column align-items-start" $ do
+          div ! class_ "d-flex w-100 justify-content-between" $ do
+            h5 ( toHtml $ groupDName )
+            small $ "timeout : " <> toHtml (groupDTimeout)
+          jobSummaryProgress groupDJobSummary
 
     hr
 
     h3 "Workers"
 
-    forM_ workers $ \(DB.WorkerDetails {..}) -> do
-      a ! class_ "list-group-item list-group-item-action flex-column align-items-start" $ do
-        div ! class_ "d-flex w-100 justify-content-between" $ do
-          h5 ( toHtml $ workerDName )
-          small $ toHtml workerDActiveJobs <> " active jobs"
-        p $
-          "Completed " <> toHtml (fst workerDCompletedJobs + snd workerDCompletedJobs) <> " jobs, "
-          <> toHtml (snd workerDCompletedJobs) <> " in the last hour."
+    div ! class_ "list-group" $ do
+      forM_ workers $ \(DB.WorkerDetails {..}) -> do
+        a ! class_ "list-group-item list-group-item-action flex-column align-items-start" $ do
+          div ! class_ "d-flex w-100 justify-content-between" $ do
+            h5 ( toHtml $ workerDName )
+            small $ toHtml workerDActiveJobs <> " active jobs"
+          p $
+            "Completed " <> toHtml (length workerDCompletedJobs )
+              <> " jobs in the last 24 hours."
 
 
   where

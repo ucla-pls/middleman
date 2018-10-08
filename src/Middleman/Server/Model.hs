@@ -357,7 +357,7 @@ data WorkerDetails = WorkerDetails
   { workerDId :: WorkerId
   , workerDName :: Text
   , workerDActiveJobs :: Int
-  , workerDCompletedJobs :: (Int, Int)
+  , workerDCompletedJobs :: [ (UTCTime, UTCTime) ]
   } deriving (Show, Eq)
 
 listWorkerDetails ::
@@ -373,29 +373,33 @@ listWorkerDetails time _ = do
   let actv :: Map.Map (Entity Worker) (Sum Int) =
         mapGroupBy (\(r, Value cnt) -> (r, Sum cnt)) active
 
-  succeded <- select $ from $ \(worker `InnerJoin` work `InnerJoin` result) -> do
-    on ( work ^. WorkResultId ==. just (result ^. ResultId) )
-    on ( work ^. WorkWorkerId ==. worker ^. WorkerId)
-    groupBy (worker ^. WorkerId, result ^. ResultEnded <=. val time)
-    where_ (result ^. ResultSuccess ==. val Succeded )
-    return (worker, result ^. ResultEnded <=. val time, countRows)
+  succeded
+    <- select $ from $ \(worker `InnerJoin` work `InnerJoin` result) -> do
+      on ( work ^. WorkResultId ==. just (result ^. ResultId) )
+      on ( work ^. WorkWorkerId ==. worker ^. WorkerId)
+      where_ (result ^. ResultSuccess ==. val Succeded
+            &&. result ^. ResultEnded >=. val time)
+      return (worker
+             , work ^. WorkStarted
+             , result ^. ResultEnded
+             )
 
-  let succ :: Map.Map (Entity Worker) (Sum Int, Sum Int) =
-        mapGroupBy
-          (\(r, Value b, Value cnt) ->
-             (r, (if b then (Sum cnt, mempty) else (mempty, Sum cnt)))) succeded
+  let succ :: Map.Map (Entity Worker) [(UTCTime, UTCTime)] =
+        Map.map (flip appEndo [])
+        . mapGroupBy (\(r, Value t, Value cnt) -> (r, Endo ((t, cnt):)))
+        $ succeded
 
   let res =
         Map.merge
            (Map.mapMissing
              (\(Entity key worker) x ->
-                WorkerDetails key (workerName worker) (getSum x) (0, 0)))
+                WorkerDetails key (workerName worker) (getSum x) []))
            (Map.mapMissing
-            (\(Entity key worker) (y1, y2) ->
-                WorkerDetails key (workerName worker) 0 (getSum y1, getSum y2)))
+            (\(Entity key worker) lst ->
+                WorkerDetails key (workerName worker) 0 lst))
            (Map.zipWithMatched
-             (\(Entity key worker) x (y1, y2)->
-                 WorkerDetails key (workerName worker) (getSum x) (getSum y1, getSum y2)))
+             (\(Entity key worker) x lst ->
+                 WorkerDetails key (workerName worker) (getSum x) lst ))
            actv
            succ
 
