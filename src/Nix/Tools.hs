@@ -53,7 +53,7 @@ copyToStore store fps = do
     "nix"
     ( ["copy", "--to", (toStoreUrl store)]
       ++ (map inStore fps)
-    ) $ runSilentProcess
+    ) $ runProcessLogErrors
   when (ec /= ExitSuccess) $
     throwIO $ CouldNotCopyToStore store (map inStore fps)
 
@@ -149,33 +149,48 @@ deriving instance (Show NixException)
 
 -- * Util
 
-runSilentProcess ::
-  (MonadIO m)
-  => ProcessConfig stdin stdout stderrIgnored
+runProcessLogErrors ::
+  (MonadReader env m, HasLogFunc env, MonadIO m)
+  => ProcessConfig stdin stdout stderr
   -> m ExitCode
-runSilentProcess =
-  runProcess
-  . setStdout closed
-  . setStderr closed
-  . setStdin closed
+runProcessLogErrors pc = do
+  res <- safeReadProcess pc
+  case res of
+    (ec, _, x) -> do
+      case decodeUtf8' . BL.toStrict $ x of
+        Right txt ->
+          forM_ (Text.lines txt) $ \line -> do
+            logError $ "[stderr]: " <> display line
+        Left err ->
+          logError $ "Failed reading the output of failed call: " <> displayShow err
+      return ec
+
+
+safeReadProcess ::
+  (MonadIO m)
+  => ProcessConfig stdin stdout stderr
+  -> m (ExitCode, BL.ByteString, BL.ByteString)
+safeReadProcess pc =
+  liftIO $
+    withProcess
+    ( setStderr byteStringOutput . setStdout byteStringOutput . setCreateGroup True $ pc)
+    handleProcess
+  where
+    handleProcess p =
+      onException
+      ( atomically $ (,,) <$> waitExitCodeSTM p <*> getStdout p <*> getStderr p)
+      ( liftIO $ interruptProcessGroupOf (unsafeProcessHandle p) )
 
 readProcessLines ::
   (MonadReader env m, MonadUnliftIO m, HasLogFunc env)
   => ProcessConfig stdin stdout stderrIgnored
   -> m (Maybe [String])
 readProcessLines pc = do
-  res <- withProcess ( setStderr byteStringOutput
-                   . setStdout byteStringOutput
-                   . setCreateGroup True $ pc) $ \p ->
-      onException
-      ( atomically $ (,,) <$> waitExitCodeSTM p <*> getStdout p <*> getStderr p)
-      ( liftIO $ interruptProcessGroupOf (unsafeProcessHandle p) )
-
+  res <- safeReadProcess pc
   case res of
     (ExitSuccess, decodeUtf8' . BL.toStrict -> Right txt, _) ->
       return . Just . RIO.map Text.unpack $ Text.lines txt
     (ec, _, x) -> do
-      -- TODO
       logError $ "Process failed with " <> displayShow ec
       case decodeUtf8' . BL.toStrict $ x of
         Right txt ->
