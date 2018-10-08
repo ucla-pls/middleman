@@ -132,15 +132,12 @@ workerApp = do
         ( maybe waitForInput fm )
 
     foreverWaitForServer m = do
-      forever $ catch m $ \case
-          HttpException e -> do
-            logError (displayShow e)
-            waitForInput
-          e -> do
-            throwIO e
+      forever $ catch m $ \(e :: HttpClientException) -> do
+        logError (displayShow e)
+        waitForInput
 
     waitForInput = do
-      let delay = 10.0
+      let delay = 60.0
       logDebug $ "Waiting for server for " <> display delay <> " seconds..."
       threadDelay (seconds delay)
 
