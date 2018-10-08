@@ -253,7 +253,14 @@ findWorkDetails ::
   DB.WorkId -> Server m (Maybe DB.WorkDetails)
 findWorkDetails workId = do
   logDebug $ "Finding work details for " <> display workId <> "."
-  DB.inDB ( DB.findWorkDetails workId )
+  DB.inDB ( List.headMaybe <$> DB.listWorkDetails (DB.WorkQuery $ Just workId ))
+
+-- | Given a `DB.WorkId` find the neseary information to compute it.
+listWorkDetails ::
+  DB.WorkQuery -> Server m [DB.WorkDetails]
+listWorkDetails query = do
+  logDebug $ "Finding work details for " <> display query <> "."
+  DB.inDB ( DB.listWorkDetails query )
 
 -- | Complete work
 finishWork ::

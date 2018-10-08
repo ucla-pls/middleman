@@ -13,8 +13,12 @@ module Middleman.Server (server, ServerOptions(..)) where
 -- base
 import           Data.Pool
 
+-- containers
+import qualified Data.Map as Map
+
 -- rio
 import RIO.Process
+import RIO.Time
 import RIO.List as List hiding (delete)
 import qualified RIO.ByteString.Lazy as BL
 import qualified RIO.Text.Lazy as TL
@@ -53,12 +57,8 @@ import Middleman.Server.Control
 import Middleman.WebServer
 import Middleman.Server.Exception
 import Middleman.DTO as DTO
-import Middleman.Server.Model (HasSqlPool(..), migrateDB
-                              , WorkQuery (..)
-                              , WorkerQuery (..)
-                              , JobDescriptionQuery (..)
-                              , JobQuery (..)
-                              , GroupQuery (..))
+import Middleman.Server.Model (HasSqlPool(..), migrateDB)
+import qualified Middleman.Server.Model as DB
 
 -- * ServerOptions
 
@@ -143,7 +143,7 @@ groupPaths :: API
 groupPaths = do
   get "/api/groups" $ do
     withName <- maybeParam "name"
-    grps <- lift $ listGroups (GroupQuery withName)
+    grps <- lift $ listGroups (DB.GroupQuery withName)
     json grps
 
   post "/api/groups/" $ do
@@ -155,6 +155,7 @@ groupPaths = do
         text ("Group already exist " <> tShow r)
         finish
       Right entity ->
+
         json entity
       Left e -> raise (tShow e)
 
@@ -191,7 +192,7 @@ jobDescriptionPaths = do
       status forbidden403
 
   get "/api/job-descriptions/" $ do
-    json =<< lift ( listJobDescriptions JobDescriptionQuery )
+    json =<< lift ( listJobDescriptions DB.JobDescriptionQuery )
 
   get "/api/job-descriptions/:id" $ do
     jobDescId <- param "id"
@@ -199,7 +200,7 @@ jobDescriptionPaths = do
 
   get "/api/job-descriptions/:id/job" $ do
     jobDescId <- param "id"
-    findOrFail ( List.headMaybe <$> listJobs (JobQuery (Just jobDescId)))
+    findOrFail ( List.headMaybe <$> listJobs (DB.JobQuery (Just jobDescId)))
 
   post "/api/job-descriptions/:id/publish" $ do
     jobDescId <- param "id"
@@ -224,13 +225,13 @@ jobPaths :: API
 jobPaths = do
   get "/api/jobs/" $ do
     desc <- maybeParam "desc"
-    json =<< lift ( listJobs (JobQuery desc) )
+    json =<< lift ( listJobs (DB.JobQuery desc) )
 
 workersPaths :: API
 workersPaths = do
   get "/api/workers" $ do
     withName <- maybeParam "name"
-    json =<< lift ( listWorkers (WorkerQuery withName))
+    json =<< lift ( listWorkers (DB.WorkerQuery withName))
 
   post "/api/workers/" $ do
     name <- newWorkerName <$> jsonData
@@ -257,7 +258,26 @@ workersPaths = do
 workPaths :: API
 workPaths = do
   get "/api/work/" $ do
-    json =<< lift ( listWork (WorkQuery))
+    json =<< lift ( listWork mempty)
+
+  get "/api/work/details" $ do
+    json =<< lift ( listWorkDetails mempty)
+
+  get "/api/work/per-hour" $ do
+    dts <- lift (listWorkDetails mempty)
+    now <- liftIO $ getCurrentTime
+    let grps =
+          Map.fromListWith (+)
+          . List.map (\WorkDetails{..} ->
+                        case workDetailsResult of
+                          Just (DB.Result {..}) | resultSuccess == DB.Succeded ->
+                            (round ((resultEnded `diffUTCTime` now) / 3600), 1)
+                          _ -> (0 :: Int , 0 :: Int)
+                     )
+          $ dts
+    groups <- lift $ listGroupDetails (DB.GroupQuery Nothing)
+    let js = DB.sumJobSummary $ Import.map (DB.groupDJobSummary) groups
+    json $ (js, grps)
 
   get "/api/work/:workId" $ do
     workId <- param "workId"

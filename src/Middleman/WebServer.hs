@@ -26,6 +26,9 @@ import Text.Blaze.Html5 as H
 import Text.Blaze.Html5.Attributes as A
 import Text.Blaze.Html.Renderer.Utf8
 
+-- Aeson
+-- import Data.Aeson.Text as Aeson
+
 -- scotty
 import           Web.Scotty.Trans as S
 
@@ -51,6 +54,8 @@ webserver ::
 webserver = do
   get "/" $ index
   get "/index.html" $ index
+  get "/main.js" $
+    file "static/main.js"
 
 
 template :: (Monad m, ScottyError e) => Html -> ActionT e m ()
@@ -78,9 +83,9 @@ template inner = do
 
     scripts = do
       script
-        ! src "https://code.jquery.com/jquery-3.3.1.slim.min.js"
+        ! src "http://code.jquery.com/jquery-3.3.1.min.js"
         ! dataAttribute "integrity"
-              "sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo"
+              "sha256-FgpCb/KJQlLNfOu91ta32o/NMZxltwRo8QtmkMRdAu8="
         ! dataAttribute "crossorigin" "anonymous" $ ""
       script
         ! src "https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.3/umd/popper.min.js"
@@ -88,10 +93,22 @@ template inner = do
               "sha384-ZMP7rVo3mIykV+2+9J3UJ46jBk0WLaUAdn689aCwoqbBJiSnjAK/l8WvCWPIPm49"
         ! dataAttribute "crossorigin" "anonymous" $ ""
       script
+        ! src "https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.22.2/moment.min.js"
+        -- ! dataAttribute "integrity"
+        --     "sha384-ChfqqxuZUCnJSK3+MXmPNIyE6ZbWh2IMqE241rYiqJxyMiZ6OW/JmZQ5stwEULTy"
+        ! dataAttribute "crossorigin" "anonymous" $ ""
+      script
+        ! src "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.7.2/Chart.min.js"
+        -- ! dataAttribute "integrity"
+        --       "sha384-ZMP7rVo3mIykV+2+9J3UJ46jBk0WLaUAdn689aCwoqbBJiSnjAK/l8WvCWPIPm49"
+        ! dataAttribute "crossorigin" "anonymous" $ ""
+      script
         ! src "https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/js/bootstrap.min.js"
         ! dataAttribute "integrity"
             "sha384-ChfqqxuZUCnJSK3+MXmPNIyE6ZbWh2IMqE241rYiqJxyMiZ6OW/JmZQ5stwEULTy"
         ! dataAttribute "crossorigin" "anonymous" $ ""
+      script ! src "/main.js?q=1" $ ""
+      script "onstart()"
 
 index :: Action env
 index = do
@@ -106,7 +123,7 @@ index = do
 
   workers <- lift $ listWorkerDetails adayago (DB.WorkerQuery Nothing)
 
-  let js@(DB.JobSummary {..}) = DB.sumJobSummary $ Import.map (DB.groupDJobSummary) groups
+  let DB.JobSummary {..} = DB.sumJobSummary $ Import.map (DB.groupDJobSummary) groups
 
   let Sum pace = foldMap
        (foldMap (\(s, _) -> if s > anhourago then Sum 1 else Sum 0)
@@ -126,7 +143,9 @@ index = do
           <> toHtml done <> " out of "
           <> toHtml total <> " jobs." )
 
-      jobSummaryProgress (js)
+      canvas ! id "overview-chart" ! width "400" ! height "200" $ mempty
+
+      -- jobSummaryProgress (js)
 
       when (pace > 0.1) $ do
         div ! class_ "d-flex w-100 justify-content-between" $ do
@@ -136,6 +155,8 @@ index = do
                  (utcToZonedTime tz estdone))
           small (toHtml (printf "%.2f" $ remaining / 3600 :: String) <> " hours")
 
+      script $ do
+        "function onstart () {renderOverview(\"overview-chart\");}"
     hr
 
     h3 "Groups"
@@ -161,6 +182,8 @@ index = do
           p $
             "Completed " <> toHtml (length workerDCompletedJobs )
               <> " jobs in the last 24 hours."
+
+
 
 
   where

@@ -68,7 +68,7 @@ module Middleman.Server.Model
   , listWork
 
   , WorkDetails (..)
-  , findWorkDetails
+  , listWorkDetails
 
   -- * Result
   , Result (..)
@@ -90,6 +90,8 @@ module Middleman.Server.Model
 import           Data.Pool
 import Data.Monoid
 
+import qualified Data.List as List
+
 -- containers
 import qualified Data.Map.Strict as Map
 import Data.Map.Merge.Strict as Map
@@ -97,6 +99,7 @@ import Data.Map.Merge.Strict as Map
 -- rio
 import           RIO hiding ((^.), on, set, isNothing)
 import           RIO.Time
+
 
 -- persist
 import qualified Database.Persist.Sql as P
@@ -156,7 +159,7 @@ share
   Result json
     ended UTCTime
     success Success
-    deriving Show Generic
+    deriving Show Generic Eq
 |]
 
 class HasSqlPool env where
@@ -301,6 +304,7 @@ data JobSummary = JobSummary
   , jobSWaiting :: Int
   } deriving (Show, Eq)
 
+
 mkJobSummary :: [(Bool, Maybe Success, Int)] -> JobSummary
 mkJobSummary jobs = do
   JobSummary
@@ -325,6 +329,7 @@ sumJobSummary js =
   , jobSWaiting = sum $ map jobSWaiting js
   }
 
+deriveJSON (def 4) ''JobSummary
 
 jobSummary ::
   JobQuery
@@ -441,31 +446,30 @@ data WorkDetails =
 
 deriveJSON (def 11) ''WorkDetails
 
-findWorkDetails ::
-  WorkId -> DB ( Maybe WorkDetails )
-findWorkDetails workId = do
+listWorkDetails ::
+  WorkQuery -> DB [WorkDetails]
+listWorkDetails (WorkQuery{..}) = do
   lst <- select $ from $ \(
-    work `InnerJoin` job `InnerJoin` jobd `InnerJoin` grp) -> do
+    (work `InnerJoin` job `InnerJoin` jobd `InnerJoin` grp) `LeftOuterJoin` result) -> do
+    on (result ?. ResultId ==. work ^. WorkResultId)
     on (jobd ^. JobDescriptionGroupId ==. grp ^. GroupId)
     on (job ^. JobDescId ==. jobd ^. JobDescriptionId )
     on (work ^. WorkJobId ==. job ^. JobId )
-    where_ ( work ^. WorkId ==. val workId)
-    return (work, jobd, grp)
+    case hasWorkId of
+      Just workId ->
+        where_ ( work ^. WorkId ==. val workId )
+      Nothing -> return ()
+    return (work, jobd, grp, result)
 
-  case lst of
-    ((entityVal -> work, jobd, grp):_) -> do
-      result <- case workResultId work of
-        Just rid -> P.get rid
-        Nothing -> return $ Nothing
-      return . Just $ WorkDetails
-        { workDetailsId = workId
-        , workDetailsStarted = workStarted work
-        , workDetailsWorkerId = workWorkerId work
-        , workDetailsJobDescription = jobd
-        , workDetailsGroup = grp
-        , workDetailsResult = result
-        }
-    _ -> return Nothing
+  return . flip List.map lst $ \(Entity workId work, jobd, grp, result) ->
+    WorkDetails
+      { workDetailsId = workId
+      , workDetailsStarted = workStarted work
+      , workDetailsWorkerId = workWorkerId work
+      , workDetailsJobDescription = jobd
+      , workDetailsGroup = grp
+      , workDetailsResult = (fmap entityVal result)
+      }
 
 -- | Finishes Work with Result. Do not over-write the previous results.
 finishWorkWithResult ::
@@ -488,11 +492,20 @@ finishWorkWithResult workId result= do
       [ JobWorkId P.=. Nothing ]
 
 data WorkQuery = WorkQuery
-  deriving (Show, Eq)
+  { hasWorkId :: Maybe WorkId
+  } deriving (Show, Eq)
+
+instance Semigroup WorkQuery where
+  (<>) a b = WorkQuery
+     (hasWorkId b <|> hasWorkId a)
+
+instance Monoid WorkQuery where
+  mempty = WorkQuery Nothing
+
 
 listWork ::
   WorkQuery -> DB [Entity Work]
-listWork (WorkQuery) = do
+listWork _ = do
   P.selectList [] [ P.Asc WorkStarted ]
 
 -- * Displays for easy handeling
@@ -537,9 +550,10 @@ instance Display JobQuery where
     ]
 
 instance Display WorkQuery where
-  display (WorkQuery) =
+  display (WorkQuery {..}) =
     fold $
     [ "WorkQuery("
+    , foldMap (\name -> "has name = " <> display name) hasWorkId
     , ")"
     ]
 
@@ -551,3 +565,4 @@ instance Display WorkerQuery where
         hasWorkerName
     , ")"
     ]
+
