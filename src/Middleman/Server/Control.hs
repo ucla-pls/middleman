@@ -50,6 +50,17 @@ listGroups query = do
     <> " groups matching query " <> display query <> "."
   return groups
 
+-- | List Groups
+listGroupDetails ::
+  DB.GroupQuery -> Server env [DB.GroupDetails]
+listGroupDetails query = do
+  groups <- DB.inDB ( DB.listGroupDetails query )
+  logDebug $
+    "Found " <> display (List.length groups)
+    <> " group details matching query " <> display query <> "."
+  return groups
+
+
 -- | Find Groups
 findGroup ::
   DB.GroupId -> Server env (Maybe (DB.Entity DB.Group))
@@ -198,6 +209,15 @@ listWorkers query = do
     "Found " <> display (List.length workers)
     <> " workers matching query " <> display query <> "."
   return workers
+
+listWorkerDetails ::
+  UTCTime -> DB.WorkerQuery -> Server env [DB.WorkerDetails]
+listWorkerDetails time query = do
+  workerDetails <- DB.inDB ( DB.listWorkerDetails time query )
+  logDebug $
+    "Found " <> display (List.length workerDetails)
+    <> " workerDetails matching query " <> display query <> "."
+  return workerDetails
 
 -- | Create or update a worker.
 upsertWorker ::

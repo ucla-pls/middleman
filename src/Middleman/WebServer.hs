@@ -11,6 +11,7 @@ Description : A simple web frontend
 module Middleman.WebServer (webserver, HasTemplates(..)) where
 
 -- rio
+import RIO.Time
 -- import qualified RIO.ByteString.Lazy as BL
 import qualified RIO.Text.Lazy       as TL
 -- import RIO.Directory
@@ -90,9 +91,73 @@ template inner = do
 
 index :: Action env
 index = do
-  _ <- lift $ jobSummary (DB.JobQuery Nothing)
-  template (H.span "hello")
 
+  groups <- lift $ listGroupDetails (DB.GroupQuery Nothing)
+
+  now <- getCurrentTime
+  let anhourago = addUTCTime (-3600) now
+
+  workers <- lift $ listWorkerDetails anhourago (DB.WorkerQuery Nothing)
+
+  let js@(DB.JobSummary {..}) = DB.sumJobSummary $ Import.map (DB.groupDJobSummary) groups
+
+  let
+    total = jobSFailed + jobSActive + jobSTimeout + jobSWaiting + jobSSuccess
+    done = jobSFailed + jobSSuccess + jobSTimeout
+
+  template $ do
+    h3 "Overview"
+    div ! class_ "alert alert-secondary" $ do
+      h4 ( "Active Jobs " <> "[" <> toHtml done <> "/" <> toHtml total <> "]" )
+      p ( "Currently, on the server we have run "
+          <> toHtml done <> " out of "
+          <> toHtml total <> " jobs." )
+
+      jobSummaryProgress (js)
+
+      hr
+
+      forM_ groups $ \( DB.GroupDetails {..}) -> do
+        div ! class_ "d-flex w-100 justify-content-between" $ do
+          h5 ( toHtml $ groupDName )
+          small $ "timeout : " <> toHtml (groupDTimeout)
+        jobSummaryProgress groupDJobSummary
+
+    hr
+
+    h3 "Workers"
+
+    forM_ workers $ \(DB.WorkerDetails {..}) -> do
+      a ! class_ "list-group-item list-group-item-action flex-column align-items-start" $ do
+        div ! class_ "d-flex w-100 justify-content-between" $ do
+          h5 ( toHtml $ workerDName )
+          small $ toHtml workerDActiveJobs <> " active jobs"
+        p $
+          "Completed " <> toHtml (fst workerDCompletedJobs + snd workerDCompletedJobs) <> " jobs, "
+          <> toHtml (snd workerDCompletedJobs) <> " in the last hour."
+
+
+  where
+    jobSummaryProgress (DB.JobSummary {..}) = do
+      let total = jobSFailed + jobSActive + jobSTimeout + jobSWaiting + jobSSuccess
+      progressBar
+        [ ("bg-danger", ( fromIntegral jobSFailed / fromIntegral total * 100))
+        , ("bg-danger progress-bar-striped", ( fromIntegral jobSTimeout / fromIntegral total * 100))
+        , ("bg-success", ( fromIntegral jobSSuccess / fromIntegral total * 100))
+        , ("bg-success progress-bar-striped", ( fromIntegral jobSActive / fromIntegral total * 100))
+        ]
+
+progressBar :: [(Text, Double)] -> Html
+progressBar bars = do
+  div ! class_ "progress" $ do
+    forM_ bars $ \(cls, _progress) ->
+      div
+      ! class_ ("progress-bar " <> toValue cls)
+      ! role "progress"
+      ! A.style ("width: " <> toValue _progress <> "%")
+      ! dataAttribute "aria-valuemin" (toValue (0 :: Double))
+      ! dataAttribute "aria-valuenow" (toValue _progress)
+      ! dataAttribute "aria-valuemax" (toValue (100 ::Double)) $ mempty
 
 -- | Render some Blaze Html
 --

@@ -24,6 +24,9 @@ module Middleman.Server.Model
   , findGroup
   , recursivelyDeleteGroup
 
+  , GroupDetails (..)
+  , listGroupDetails
+
   -- * JobDescription
   , JobDescriptionQuery (..)
   , JobDescription (..)
@@ -39,9 +42,11 @@ module Middleman.Server.Model
   , createJob
   , JobQuery (..)
   , listJobs
+
   , JobSummary (..)
   , jobSummary
   , retryOldJobs
+  , sumJobSummary
 
   -- * Worker
   , WorkerQuery (..)
@@ -49,6 +54,9 @@ module Middleman.Server.Model
   , WorkerId
   , listWorkers
   , upsertWorker
+
+  , WorkerDetails (..)
+  , listWorkerDetails
 
   -- * Work
   , WorkQuery (..)
@@ -79,28 +87,32 @@ module Middleman.Server.Model
   where
 
 -- base?
-import Data.Pool
-import qualified Data.Map as Map
+import           Data.Pool
+import Data.Monoid
+
+-- containers
+import qualified Data.Map.Strict as Map
+import Data.Map.Merge.Strict as Map
 
 -- rio
-import RIO hiding ((^.), on, set)
-import RIO.Time
+import           RIO hiding ((^.), on, set, isNothing)
+import           RIO.Time
 
 -- persist
 import qualified Database.Persist.Sql as P
 import           Database.Persist.TH
 
 -- esqueleto
-import Database.Esqueleto
+import           Database.Esqueleto
 
 -- aeson
-import Data.Aeson.TH
+import           Data.Aeson.TH
 
 -- middleman
 import           Middleman.Server.Exception
 import           Nix.Types
 import           Middleman.Server.Model.Extra
-import TH
+import           TH
 
 share
   [ mkPersist sqlSettings
@@ -111,7 +123,7 @@ share
     name Text
     timeout Double
     UniqueGroupName name
-    deriving Show Generic
+    deriving Show Generic Ord Eq
 
   JobDescription json
     derivation Derivation
@@ -131,7 +143,7 @@ share
     name Text
     ipaddress Word32
     UniqueWorkerId ipaddress
-    deriving Show Generic
+    deriving Show Generic Ord Eq
 
   Work json
     workerId WorkerId
@@ -185,6 +197,45 @@ findGroup ::
   GroupId -> DB (Maybe (Entity Group))
 findGroup groupId = do
   P.getEntity groupId
+
+data GroupDetails = GroupDetails
+  { groudDId :: GroupId
+  , groupDName :: Text
+  , groupDTimeout :: Double
+  , groupDJobSummary :: JobSummary
+  } deriving (Show)
+
+listGroupDetails ::
+  GroupQuery -> DB [GroupDetails]
+listGroupDetails _ = do
+  jobs <- select $ from $
+    \((((group `LeftOuterJoin` jd) `LeftOuterJoin` job) `LeftOuterJoin` work) `LeftOuterJoin` result) -> do
+    on ( work ?. WorkResultId ==. just (result ?. ResultId) )
+    on ( job ?. JobWorkId ==. just (work ?. WorkId) )
+    on ( job ?. JobDescId ==. jd ?. JobDescriptionId )
+    on ( just (group ^. GroupId) ==. jd ?. JobDescriptionGroupId )
+    groupBy ( group ^. GroupId, job ?. JobWorkId ==. just(work ?. WorkId), result ?. ResultSuccess )
+    return ( group
+           , just (job ?. JobWorkId ==. just (work ?. WorkId))
+           , result ?. ResultSuccess
+           , countRows)
+
+  let
+    grp =
+      mapGroupBy
+      (\(g, Value run, Value r, Value cnt) -> (g, [(maybe False (const True) run, r, cnt)])) jobs
+    res =
+      map (\(Entity key group, lst) ->
+             GroupDetails key (groupName group) (groupTimeout group) (mkJobSummary lst)
+          )
+      $ Map.toAscList grp
+
+  return res
+
+mapGroupBy :: (Monoid m, Ord k) => (a -> (k, m)) -> [a] -> Map.Map k m
+mapGroupBy f lst =
+  Map.fromListWith mappend $ map f lst
+
 
 jobDescriptionsWithGroup ::
   GroupId -> DB [Entity JobDescription]
@@ -250,6 +301,31 @@ data JobSummary = JobSummary
   , jobSWaiting :: Int
   } deriving (Show, Eq)
 
+mkJobSummary :: [(Bool, Maybe Success, Int)] -> JobSummary
+mkJobSummary jobs = do
+  JobSummary
+    { jobSActive  = findOrZero (True, Nothing)
+    , jobSSuccess = findOrZero (True, Just Succeded)
+    , jobSTimeout  = findOrZero (True, Just Timeout)
+    , jobSFailed = findOrZero (True, Just Failed)
+    , jobSWaiting = findOrZero (False, Nothing)
+    }
+  where
+    findOrZero v = Map.findWithDefault 0 v sucCount
+    sucCount =
+      foldMap (\(run, succ, c) -> Map.singleton (run, succ) c) jobs
+
+sumJobSummary :: [JobSummary] -> JobSummary
+sumJobSummary js =
+  JobSummary
+  { jobSActive = sum $ map jobSActive js
+  , jobSSuccess = sum $ map jobSSuccess js
+  , jobSTimeout = sum $ map jobSTimeout js
+  , jobSFailed = sum $ map jobSFailed js
+  , jobSWaiting = sum $ map jobSWaiting js
+  }
+
+
 jobSummary ::
   JobQuery
   -> DB JobSummary
@@ -262,18 +338,8 @@ jobSummary _ = do
            , result ?. ResultSuccess
            , countRows)
 
-  let sucCount =
-        foldMap (\(Value run, Value succ, Value c) ->
-                   Map.singleton (maybe False (const True) run, succ) c)
-        jobs
-
-  return $ JobSummary
-    { jobSActive  = Map.findWithDefault 0 (True, Nothing) sucCount
-    , jobSSuccess = Map.findWithDefault 0 (True, Just Succeded) sucCount
-    , jobSTimeout  = Map.findWithDefault 0 (True, Just Timeout) sucCount
-    , jobSFailed = Map.findWithDefault 0 (True, Just Failed) sucCount
-    , jobSWaiting = Map.findWithDefault 0 (False, Nothing) sucCount
-    }
+  return . mkJobSummary . map (\(Value a, Value b, Value c) ->
+                                 (maybe False (const True) a, b, c)) $ jobs
 
 
 data WorkerQuery = WorkerQuery
@@ -286,6 +352,55 @@ listWorkers (WorkerQuery {..}) = do
   let query =
         maybe [] (\name -> [ WorkerName P.==. name ]) hasWorkerName
   P.selectList query [ P.Asc WorkerName ]
+
+data WorkerDetails = WorkerDetails
+  { workerDId :: WorkerId
+  , workerDName :: Text
+  , workerDActiveJobs :: Int
+  , workerDCompletedJobs :: (Int, Int)
+  } deriving (Show, Eq)
+
+listWorkerDetails ::
+  UTCTime -> WorkerQuery -> DB [WorkerDetails]
+listWorkerDetails time _ = do
+  active <- select $ from $ \(worker `LeftOuterJoin` work `LeftOuterJoin` result) -> do
+    on ( work ?. WorkResultId ==. just (result ?. ResultId) )
+    on ( work ?. WorkWorkerId ==. just (worker ^. WorkerId) )
+    groupBy (worker ^. WorkerId)
+    where_ (isNothing (work ?. WorkResultId ))
+    return (worker, countRows)
+
+  let actv :: Map.Map (Entity Worker) (Sum Int) =
+        mapGroupBy (\(r, Value cnt) -> (r, Sum cnt)) active
+
+  succeded <- select $ from $ \(worker `InnerJoin` work `InnerJoin` result) -> do
+    on ( work ^. WorkResultId ==. just (result ^. ResultId) )
+    on ( work ^. WorkWorkerId ==. worker ^. WorkerId)
+    groupBy (worker ^. WorkerId, result ^. ResultEnded <=. val time)
+    where_ (result ^. ResultSuccess ==. val Succeded )
+    return (worker, result ^. ResultEnded <=. val time, countRows)
+
+  let succ :: Map.Map (Entity Worker) (Sum Int, Sum Int) =
+        mapGroupBy
+          (\(r, Value b, Value cnt) ->
+             (r, (if b then (Sum cnt, mempty) else (mempty, Sum cnt)))) succeded
+
+  let res =
+        Map.merge
+           (Map.mapMissing
+             (\(Entity key worker) x ->
+                WorkerDetails key (workerName worker) (getSum x) (0, 0)))
+           (Map.mapMissing
+            (\(Entity key worker) (y1, y2) ->
+                WorkerDetails key (workerName worker) 0 (getSum y1, getSum y2)))
+           (Map.zipWithMatched
+             (\(Entity key worker) x (y1, y2)->
+                 WorkerDetails key (workerName worker) (getSum x) (getSum y1, getSum y2)))
+           actv
+           succ
+
+  return $ Map.elems res
+
 
 upsertWorker ::
   Worker -> DB (Entity Worker)
