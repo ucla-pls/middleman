@@ -32,6 +32,8 @@ module Middleman.DTO
   , DB.Success (..)
 
   , Info (..)
+
+  , AddTime (..)
   )
   where
 
@@ -69,6 +71,13 @@ data NewWorker =
   }
 
 deriveJSON (def 9) ''NewWorker
+
+data AddTime =
+  AddTime
+  { addTime :: !Double
+  }
+
+deriveJSON (def 0) ''AddTime
 
 instance (Parsable DB.GroupId) where
   parseParam txt =

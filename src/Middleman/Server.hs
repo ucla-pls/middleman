@@ -38,6 +38,9 @@ import qualified Network.Wai.Middleware.RequestLogger
 -- aseon
 import Data.Aeson (ToJSON)
 
+-- lens-aseon
+-- import Data.Aeson.Lens
+
 -- scotty
 import           Web.Scotty.Trans
 
@@ -163,6 +166,14 @@ groupPaths = do
     key <- param "id"
     findOrFail $ findGroup key
 
+  post "/api/groups/:groupId/add-time" $ do
+    groupId <- param "groupId"
+    t <- jsonData
+    b <- lift $ increaseTimeoutOfGroup groupId (addTime t)
+    if b
+      then status ok200
+      else status badRequest400
+
   delete "/api/groups/:groupId" $ do
     groupId <- param "groupId"
     lift $ deleteGroup groupId
@@ -200,7 +211,9 @@ jobDescriptionPaths = do
 
   get "/api/job-descriptions/:id/job" $ do
     jobDescId <- param "id"
-    findOrFail ( List.headMaybe <$> listJobs (DB.JobQuery (Just jobDescId)))
+    findOrFail ( List.headMaybe <$>
+                 listJobs (mempty { DB.hasJobDescriptionId = (Just jobDescId)})
+               )
 
   post "/api/job-descriptions/:id/publish" $ do
     jobDescId <- param "id"
@@ -225,7 +238,7 @@ jobPaths :: API
 jobPaths = do
   get "/api/jobs/" $ do
     desc <- maybeParam "desc"
-    json =<< lift ( listJobs (DB.JobQuery desc) )
+    json =<< lift ( listJobs (mempty { DB.hasJobDescriptionId = desc}))
 
 workersPaths :: API
 workersPaths = do

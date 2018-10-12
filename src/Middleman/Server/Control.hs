@@ -94,6 +94,32 @@ deleteGroup groupId = do
   DB.inDB ( DB.recursivelyDeleteGroup groupId )
   logDebug $ "done"
 
+-- | Increase timout of group
+increaseTimeoutOfGroup ::
+  DB.GroupId -> Double -> Server env Bool
+increaseTimeoutOfGroup groupId tdiff = do
+  egroup <- DB.inDB ( DB.findGroup groupId )
+  case egroup of
+    Just grp -> do
+      if (tdiff > 0)
+        then do
+        jobCount <- DB.inDB $ do
+          jobCount <- DB.retryJobs (
+            mempty { DB.hasGroupId = Just groupId
+                   , DB.hasSuccessState = Just (Just DB.Timeout)}
+            )
+          _ <- DB.increaseTimeoutOfGroup groupId tdiff
+          return jobCount
+        logDebug $ "Updated timeout of group " <> display (DB.entityKey grp)
+          <> " retried " <> display jobCount <> " timed-out jobs."
+        return True
+        else do
+        logError $ "Group as timeout " <> display (DB.groupTimeout (DB.entityVal grp)) <> " greater than the increased timeout"
+        return False
+    Nothing -> do
+      logError $ "No group with id " <> display groupId
+      return False
+
 retryOldGroup ::
   DB.GroupId -> Server env Int
 retryOldGroup gid = do
@@ -101,7 +127,14 @@ retryOldGroup gid = do
     Just (DB.groupTimeout . DB.entityVal -> to') -> do
       t <- getCurrentTime
       let startTime = addUTCTime (realToFrac $ negate to') t
-      DB.inDB ( DB.retryOldJobs gid startTime )
+      DB.inDB (
+        DB.retryJobs
+          (mempty
+           { DB.hasGroupId = Just gid
+           , DB.isOlderThan = Just startTime
+           , DB.hasSuccessState = Just Nothing
+           })
+        )
     Nothing ->
       return 0
   logDebug $ "Retrying " <> display i <> " old jobs."

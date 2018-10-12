@@ -20,37 +20,38 @@ extra-source-files:
 description:         Please see the README on Github at <https://github.com/kalhauge/middleman#readme>
 
 dependencies:
+- aeson
+- aeson-casing
+- async >= 2.2.1
 - base >= 4.10 && < 10
-- rio >= 0.1.1.0
-- scotty
+- blaze-html
+- blaze-html >= 0.9.1.1
+- bytestring
+- conduit
+- containers
+- esqueleto
+- http-client
+- http-types
+- lens
+- lens-aeson
+- monad-logger
+- mtl
+- network
 - persistent
 - persistent-postgresql >= 2.8.2.0
 - persistent-template 
+- process >= 1.6.3.0
+- resource-pool
+- rio >= 0.1.1.0
+- scotty
+- sysinfo >= 0.1.1
+- transformers
+- unix
+- unliftio
 - uuid
-- conduit
-- monad-logger
-- aeson
-- http-types
-- network
 - wai
 - wai-extra
-- esqueleto
 - wreq
-- lens-aeson
-- lens
-- resource-pool
-- unix
-- mtl
-- transformers
-- blaze-html
-- async >= 2.2.1
-- bytestring
-- http-client
-- unliftio
-- containers
-- sysinfo >= 0.1.1
-- process >= 1.6.3.0
-- blaze-html >= 0.9.1.1
 
 ghc-options:
 - -Wall

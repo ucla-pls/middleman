@@ -20,6 +20,7 @@ module Middleman.Server.Model
   , Group (..)
   , GroupId
   , createGroup
+  , increaseTimeoutOfGroup
   , listGroups
   , findGroup
   , recursivelyDeleteGroup
@@ -45,7 +46,7 @@ module Middleman.Server.Model
 
   , JobSummary (..)
   , jobSummary
-  , retryOldJobs
+  , retryJobs
   , sumJobSummary
 
   -- * Worker
@@ -89,7 +90,6 @@ module Middleman.Server.Model
 -- base?
 import           Data.Pool
 import Data.Monoid
-
 import qualified Data.List as List
 
 -- containers
@@ -99,6 +99,7 @@ import Data.Map.Merge.Strict as Map
 -- rio
 import           RIO hiding ((^.), on, set, isNothing)
 import           RIO.Time
+import qualified RIO.Text as Text
 
 
 -- persist
@@ -184,7 +185,14 @@ migrateDB =
 createGroup ::
   Group -> DB (Entity Group)
 createGroup grp = do
-  P.insertUniqueEntity grp `orFail` ItemAlreadyExists grp
+  P.insertUniqueEntity grp
+    `orFail` ItemAlreadyExists grp
+
+increaseTimeoutOfGroup ::
+  GroupId -> Double  -> DB (Entity Group)
+increaseTimeoutOfGroup groupId dp =
+  Entity groupId <$>
+    P.updateGet groupId [ GroupTimeout P.+=. dp]
 
 data GroupQuery = GroupQuery
   { hasName :: Maybe Text
@@ -280,7 +288,21 @@ createJob job =
 
 data JobQuery = JobQuery
  { hasJobDescriptionId :: Maybe JobDescriptionId
+ , hasGroupId :: Maybe GroupId
+ , isOlderThan :: Maybe UTCTime
+ , hasSuccessState :: Maybe (Maybe Success)
  } deriving (Show, Eq)
+
+instance Semigroup JobQuery where
+  (<>) a b = JobQuery
+     (hasJobDescriptionId b <|> hasJobDescriptionId a)
+     (hasGroupId b <|> hasGroupId a)
+     (isOlderThan b <|> isOlderThan a)
+     (hasSuccessState b <|> hasSuccessState a)
+
+instance Monoid JobQuery where
+  mempty = JobQuery Nothing Nothing Nothing Nothing
+
 
 listJobs ::
   JobQuery -> DB [Entity Job]
@@ -289,13 +311,36 @@ listJobs ( JobQuery {..} ) = do
         maybe [] (\jd -> [ JobDescId P.==. jd]) hasJobDescriptionId
   P.selectList query []
 
-retryOldJobs ::
-  GroupId -> UTCTime -> DB Int
-retryOldJobs gid before =
-  fmap fromIntegral $ rawExecuteCount
-    "UPDATE job SET work_id =DEFAULT FROM job as j INNER JOIN work as w ON j.work_id = w.id INNER JOIN job_description as jd ON j.desc_id = jd.id WHERE (jd.group_id = ? AND j.id = job.id AND w.started < ? AND w.result_id IS NULL)"
-    [ PersistInt64 (fromSqlKey gid), PersistUTCTime before ]
+retryJobs ::
+  JobQuery -> DB Int
+retryJobs (JobQuery {..}) =
+  let
+    (inputs, wheres) = fold
+      [ foldMap
+        (\case
+            Just sc -> ([ P.toPersistValue sc ], ["r.success = ?"])
+            Nothing -> ([], ["w.result_id IS NULL"])
+        ) hasSuccessState
+      , foldMap
+        (\gId -> ( P.keyToValues gId , ["jd.group_id = ?"])
+        ) hasGroupId
+      , foldMap
+        (\date -> ( [ P.toPersistValue date], ["w.started < ?"])
+        ) isOlderThan
+      ]
+    sql = Text.intercalate " "
+          [ "UPDATE job SET work_id =DEFAULT FROM job as j"
+          , "INNER JOIN work as w ON j.work_id = w.id"
+          , "INNER JOIN job_description as jd ON j.desc_id = jd.id"
+          , "LEFT OUTER JOIN result as r ON w.result_id = r.id"
+          , "WHERE ("
+            <> Text.intercalate " AND " wheres
+            <> ")"
+          ]
+  in do
+    fmap fromIntegral (rawExecuteCount sql inputs)
 
+    --(jd.group_id = ? AND j.id = job.id AND w.started < ? AND w.result_id IS NULL)"
 data JobSummary = JobSummary
   { jobSActive :: Int
   , jobSSuccess :: Int
