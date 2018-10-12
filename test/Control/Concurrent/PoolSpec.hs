@@ -2,21 +2,21 @@ module Control.Concurrent.PoolSpec where
 
 import Import
 import Test.Hspec
-import Test.Hspec.QuickCheck
 
-import Data.Semigroup
-import Data.Maybe
 import Data.List
 
 import Control.Concurrent.Pool
 
-import UnliftIO
+
+defaultPoolSettings :: PoolSettings m
+defaultPoolSettings =
+  PoolSettings 2 [] 60 True
 
 spec :: Spec
 spec = do
   describe "runPool" $ do
     it "can run two jobs in parallel" $ do
-      runPool (PoolSettings 2 [] 60) $ \ps -> do
+      runPool defaultPoolSettings $ \ps -> do
         x <- newTVarIO (0 :: Int)
         dnto $ dispatch ps (incr x 1)
         dnto $ dispatch ps (incr x 2)
@@ -27,7 +27,7 @@ spec = do
         r `shouldBe` Just ()
 
     it "does not run more than two things i parallel" $ do
-      runPool (PoolSettings 2 [] 60) $ \ps -> do
+      runPool defaultPoolSettings $ \ps -> do
         x <- newTVarIO (0 :: Int)
 
         dnto $ dispatch ps ( incr x 1 )
@@ -38,7 +38,7 @@ spec = do
         r `shouldBe` Nothing
 
     it "can run more than 2 things i parallel, if we let them" $ do
-      runPool (PoolSettings 3 [] 60) $ \ps -> do
+      runPool (defaultPoolSettings { maxJobs = 3}) $ \ps -> do
         x <- newTVarIO (0 :: Int)
 
         dnto $ dispatch ps ( incr x 1 )
@@ -49,7 +49,7 @@ spec = do
         r `shouldBe` Just ()
 
     it "can run more than 2 things i serial" $ do
-      runPool (PoolSettings 2 [] 60) $ \ps -> do
+      runPool defaultPoolSettings $ \ps -> do
         x <- newTVarIO (0 :: Int)
 
         dnto $ dispatch ps ( incr x 1 )
@@ -62,7 +62,7 @@ spec = do
       x <- newTVarIO ([0] :: [Int])
       c <- newTVarIO (0 :: Int)
       let exactly2  = Regulator (compare 2 . head <$> readTVarIO x)
-      runPool (PoolSettings 4 [ exactly2 ] 1e-1) $ \ps -> do
+      runPool (PoolSettings 4 [ exactly2 ] 1e-1 True) $ \ps -> do
         replicateM_ 4 $ do
           dispatch ps $
             ( do
