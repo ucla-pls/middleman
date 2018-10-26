@@ -282,7 +282,7 @@ workPaths = do
 
   get "/api/work/per-hour" $ do
     now <- liftIO $ getCurrentTime
-    dts <- lift (listWorkDetails (mempty { DB.isAfterDate = Just $ addUTCTime (-3600) now }))
+    dts <- lift (listWorkDetails (mempty { DB.isAfterDate = Just $ addUTCTime (-3600 * 24) now }))
     let
       deltaHour ended = round ((ended `diffUTCTime` now) / 3600)
       -- roundHour ended = addUTCTime (fromIntegral (deltaHour ended) * 3600) now
