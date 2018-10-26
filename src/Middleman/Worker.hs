@@ -11,7 +11,6 @@ Description : The worker of the middleman.
 module Middleman.Worker
   where
 
-
 -- base
 import qualified Data.Map as Map
 import Text.Read
@@ -21,6 +20,7 @@ import RIO.Process
 import RIO.List as List
 import qualified RIO.Text as Text
 import qualified RIO.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy.Char8 as BLC
 
 -- http-client
 import Network.HTTP.Client
@@ -106,20 +106,20 @@ workerApp = do
               logInfo $ display workDetailsId
                 <> " completed successfully."
               Nix.copyToStore (infoStoreUrl info) [output]
-              Client.finishWork workDetailsId Succeded
-            Left True -> do
+              Client.finishWork workDetailsId Succeded BL.empty
+            Left Nothing -> do
               logError $ display workDetailsId
                 <> " timed out after " <> display timelimit <> "."
-              Client.finishWork workDetailsId Timeout
-            Left False -> do
+              Client.finishWork workDetailsId Timeout BL.empty
+            Left (Just msg) -> do
               logError $ display workDetailsId
                 <> " failed."
-              Client.finishWork workDetailsId Failed
+              Client.finishWork workDetailsId Failed msg
         ) `withException` (
         \(e :: SomeException) -> do
           logError $ display workDetailsId
             <> " was rudely interrupted by " <> displayShow e <> ", retrying it."
-          Client.finishWork workDetailsId Retry
+          Client.finishWork workDetailsId Retry BL.empty
         )
 
     safePullWork workerId fm =
@@ -127,7 +127,7 @@ workerApp = do
         ( maybe (return ())
           (\(WorkDetails {..}) -> do
               logError $ display workDetailsId <> " was rudely interrupted."
-              Client.finishWork workDetailsId Retry
+              Client.finishWork workDetailsId Retry BL.empty
           ))
         ( maybe waitForInput fm )
 
@@ -150,16 +150,17 @@ performJob ::
   -- ^ Timelimit in seconds
   -> Derivation
   -- ^ Derivation name
-  -> RIO env (Either Bool OutputPath)
+  -> RIO env (Either (Maybe BL.ByteString) OutputPath)
 performJob timelimit drv = do
   threadId <- myThreadId
   succ <- timeout (seconds timelimit)
     $ Nix.realizeDerivation drv
           ("middleman-link/" ++ show threadId)
   return $ case succ of
-    Just (Just [fp]) -> Right fp
-    Nothing -> Left True
-    _ -> Left False
+    Just (Right [fp]) -> Right fp
+    Just (Left msg) -> Left (Just msg)
+    Just (Right a) -> Left (Just $ "Does not contain a single line, but: " <> BLC.pack (show a))
+    Nothing -> Left Nothing
 
 -- * Regulator
 

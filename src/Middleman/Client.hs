@@ -35,6 +35,7 @@ import Network.HTTP.Client
 -- rio
 import RIO
 import RIO.List as List
+import qualified RIO.ByteString.Lazy as BL
 
 -- middleman
 import Network.HTTP.Client.Helper
@@ -111,7 +112,7 @@ pullWork workerId =
     "api" </> "workers" </> value workerId </> "work" <?> []
 
 finishWork ::
-  WorkId -> Success -> Client ()
-finishWork workId succ =
-  post () . expectOk . json $
+  WorkId -> Success -> BL.ByteString -> Client ()
+finishWork workId succ msg =
+  void . post msg . expectOk $
     "api" </> "work" </> value workId </> value succ <?> []

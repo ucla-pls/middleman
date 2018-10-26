@@ -52,4 +52,5 @@ runDevelop = do
           "ssh://localhost"
           ( "/nix/var/nix/gcroots/per-user/" ++ username )
           "templates"
+          "errors"
       )

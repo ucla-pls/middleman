@@ -72,12 +72,15 @@ function renderOverview(str) {
                         id: "y-axis-1",
                         position: "left",
                         ticks: {
-                            beginAtZero:true
+                            beginAtZero: true
                         },
                         gridLines: { drawOnChartArea: false }
                     }, {
                         id: "y-axis-2",
                         position: "right",
+                        ticks: {
+                            beginAtZero: true
+                        },
                         gridLines: { drawOnChartArea: false }
                     }]
                 }

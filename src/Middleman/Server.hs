@@ -70,6 +70,7 @@ data ServerOptions = ServerOptions
   , _sopsStoreUrl :: !Store
   , _sopsGCRoot :: !FilePath
   , _sopsTemplates :: !FilePath
+  , _sopsErrorFolder :: !FilePath
   }
 makeClassy ''ServerOptions
 
@@ -79,6 +80,9 @@ data ServerApp = ServerApp
   , _dbPool :: Pool SqlBackend
   }
 makeLenses ''ServerApp
+
+instance HasErrorFolder ServerApp where
+  errorFolder = serverOptions . sopsErrorFolder
 
 instance HasOptions ServerApp where
   options = app . Import.options
@@ -277,14 +281,17 @@ workPaths = do
     json =<< lift ( listWorkDetails mempty)
 
   get "/api/work/per-hour" $ do
-    dts <- lift (listWorkDetails mempty)
     now <- liftIO $ getCurrentTime
-    let grps =
+    dts <- lift (listWorkDetails (mempty { DB.isAfterDate = Just $ addUTCTime (-3600) now }))
+    let
+      deltaHour ended = round ((ended `diffUTCTime` now) / 3600)
+      -- roundHour ended = addUTCTime (fromIntegral (deltaHour ended) * 3600) now
+      grps =
           Map.fromListWith (+)
           . List.map (\WorkDetails{..} ->
                         case workDetailsResult of
                           Just (DB.Result {..}) | resultSuccess == DB.Succeded ->
-                            (round ((resultEnded `diffUTCTime` now) / 3600), 1)
+                            (deltaHour resultEnded , 1)
                           _ -> (0 :: Int , 0 :: Int)
                      )
           $ dts
@@ -299,7 +306,8 @@ workPaths = do
   post "/api/work/:workId/:succ" $ do
     workId <- param "workId"
     succ <- param "succ"
-    result <- lift . try $ finishWork workId succ
+    msg <- body
+    result <- lift . try $ finishWork workId succ msg
     case result of
       Left (DatabaseException e@(ItemNotFoundException _)) -> do
         status notFound404

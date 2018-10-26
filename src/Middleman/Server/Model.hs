@@ -491,6 +491,9 @@ data WorkDetails =
 
 deriveJSON (def 11) ''WorkDetails
 
+whenJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
+whenJust = flip (maybe (return ()))
+
 listWorkDetails ::
   WorkQuery -> DB [WorkDetails]
 listWorkDetails (WorkQuery{..}) = do
@@ -500,10 +503,10 @@ listWorkDetails (WorkQuery{..}) = do
     on (jobd ^. JobDescriptionGroupId ==. grp ^. GroupId)
     on (job ^. JobDescId ==. jobd ^. JobDescriptionId )
     on (work ^. WorkJobId ==. job ^. JobId )
-    case hasWorkId of
-      Just workId ->
-        where_ ( work ^. WorkId ==. val workId )
-      Nothing -> return ()
+    whenJust hasWorkId $ \workId ->
+      where_ ( work ^. WorkId ==. val workId )
+    whenJust isAfterDate $ \date ->
+      where_ ( work ^. WorkStarted >=. val date)
     return (work, jobd, grp, result)
 
   return . flip List.map lst $ \(Entity workId work, jobd, grp, result) ->
@@ -538,15 +541,16 @@ finishWorkWithResult workId result= do
 
 data WorkQuery = WorkQuery
   { hasWorkId :: Maybe WorkId
+  , isAfterDate :: Maybe UTCTime
   } deriving (Show, Eq)
 
 instance Semigroup WorkQuery where
   (<>) a b = WorkQuery
      (hasWorkId b <|> hasWorkId a)
+     (isAfterDate b <|> isAfterDate a)
 
 instance Monoid WorkQuery where
-  mempty = WorkQuery Nothing
-
+  mempty = WorkQuery Nothing Nothing
 
 listWork ::
   WorkQuery -> DB [Entity Work]

@@ -78,6 +78,9 @@ main = do
          <*> option str
          (long "templates" <> value "templates"
           <> help "The templates directory")
+         <*> option str
+         (long "error-folder" <> value "errors"
+          <> help "The directory to put errors in.")
         )
 
 

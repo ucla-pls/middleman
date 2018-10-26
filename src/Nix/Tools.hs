@@ -79,7 +79,7 @@ realizeDerivation ::
   , MonadUnliftIO m )
   => Derivation -- ^ Derivation
   -> FilePath -- ^ Root
-  -> m (Maybe [OutputPath])
+  -> m (Either BL.ByteString [OutputPath])
 realizeDerivation drv root = do
   result <- proc "nix-store"
     [ "-j", "1"
@@ -88,11 +88,11 @@ realizeDerivation drv root = do
     , "--indirect" ]
     $ readProcessLines
   case result of
-    Just fps -> do
+    Right fps -> do
       paths <- mapM canonicalizePath fps
-      return . Just . map fromStore $ paths
-    Nothing ->
-      return Nothing
+      return . Right . map fromStore $ paths
+    Left msg ->
+      return ( Left msg )
 
 
 class HasGCRoot env where
@@ -184,12 +184,12 @@ safeReadProcess pc =
 readProcessLines ::
   (MonadReader env m, MonadUnliftIO m, HasLogFunc env)
   => ProcessConfig stdin stdout stderrIgnored
-  -> m (Maybe [String])
+  -> m (Either BL.ByteString [String])
 readProcessLines pc = do
   res <- safeReadProcess pc
   case res of
     (ExitSuccess, decodeUtf8' . BL.toStrict -> Right txt, _) ->
-      return . Just . RIO.map Text.unpack $ Text.lines txt
+      return . Right . RIO.map Text.unpack $ Text.lines txt
     (ec, _, x) -> do
       logError $ "Process failed with " <> displayShow ec
       case decodeUtf8' . BL.toStrict $ x of
@@ -198,7 +198,7 @@ readProcessLines pc = do
             logError $ "[stderr]: " <> display line
         Left err ->
           logError $ "Failed reading the output of failed call: " <> displayShow err
-      return Nothing
+      return (Left x)
 
 
 readProcessJSON ::

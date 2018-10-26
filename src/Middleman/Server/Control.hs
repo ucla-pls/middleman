@@ -22,6 +22,9 @@ import RIO.List as List
 import RIO.Text as Text
 import RIO.Process
 import RIO.Time (getCurrentTime)
+import RIO.FilePath ((</>))
+import RIO.Directory (createDirectoryIfMissing)
+import qualified RIO.ByteString.Lazy as BL
 
 -- middleman
 import Middleman.Server.Exception
@@ -38,7 +41,12 @@ type Server env a =
   , MonadUnliftIO m
   ) => m a
 
+
+class HasErrorFolder env where
+  errorFolder :: Lens' env FilePath
+
 -- * Groups
+
 
 -- | List Groups
 listGroups ::
@@ -286,7 +294,7 @@ findWorkDetails ::
   DB.WorkId -> Server m (Maybe DB.WorkDetails)
 findWorkDetails workId = do
   logDebug $ "Finding work details for " <> display workId <> "."
-  DB.inDB ( List.headMaybe <$> DB.listWorkDetails (DB.WorkQuery $ Just workId ))
+  DB.inDB ( List.headMaybe <$> DB.listWorkDetails (mempty { DB.hasWorkId = Just workId }) )
 
 -- | Given a `DB.WorkId` find the neseary information to compute it.
 listWorkDetails ::
@@ -297,11 +305,12 @@ listWorkDetails query = do
 
 -- | Complete work
 finishWork ::
-  (HasGCRoot env)
+  (HasGCRoot env, HasErrorFolder env)
   => DB.WorkId
   -> DB.Success
+  -> BL.ByteString
   -> Server env ()
-finishWork workId success = do
+finishWork workId success msg = do
   time <- getCurrentTime
   let result = DB.Result time success
 
@@ -313,10 +322,21 @@ finishWork workId success = do
       "The end time should be later than the start time: "
       ++ show start ++ " >= " ++ show end
 
-  when (DB.resultSuccess result == DB.Succeded) $ do
-    -- Validation
-    handleNix $ Nix.validateLink
-      ( relativeLinkOfJob (DB.entityVal (DB.workDetailsJobDescription w)))
+  let rellink = relativeLinkOfJob (DB.entityVal (DB.workDetailsJobDescription w))
+  case DB.resultSuccess result of
+    DB.Succeded -> do
+      -- Validation
+      handleNix $ Nix.validateLink rellink
+
+    DB.Failed -> do
+      -- Print message to file
+      errFolder <- view errorFolder
+      createDirectoryIfMissing True errFolder
+      BL.writeFile (errFolder </> rellink) msg
+
+    _ ->
+      -- Do nothing
+      return ()
 
   DB.inDB ( DB.finishWorkWithResult workId result )
 
