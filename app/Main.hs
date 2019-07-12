@@ -1,4 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE RecordWildCards #-}
 module Main (main) where
 
 import System.Environment
@@ -61,28 +63,44 @@ main = do
     addStart username =
       addCommand "start"
         "Start the server"
-        ModeServer
-        (ServerOptions
-         <$> option auto
-         (long "postgresql" <> showDefault
-          <> value "user=middleman password=middleman port=5432 connect_timeout=10"
-          <> help "Postgresql connection string")
-         <*> option str
-         (long "store-url" <> value "ssh://localhost"
-          <> help "The url to the store, should be pointing to the server itself")
-         <*> option str
-         (long "gc-root"
-          <> help "The directory to place the gc-roots"
-          <> value ( "/nix/var/nix/gcroots/per-user/" ++ username )
-          <> showDefault )
-         <*> option str
-         (long "templates" <> value "templates"
-          <> help "The templates directory")
-         <*> option str
-         (long "error-folder" <> value "errors"
-          <> help "The directory to put errors in.")
-        )
+        ModeServer $ do
 
+      _sopsConnectionString <- option auto $
+        long "postgresql"
+        <> showDefault
+        <> value "user=middleman password=middleman port=5432 connect_timeout=10"
+        <> help "Postgresql connection string"
+        <> metavar "STRING"
+
+      _sopsStoreUrl <- option str $
+        long "store-url"
+        <> value "ssh://localhost"
+        <> help "The url to the store, should be pointing to the server itself"
+        <> showDefault
+        <> metavar "URL"
+
+      _sopsGCRoot <- option str $
+        long "gc-root"
+        <> help "The directory to place the gc-roots"
+        <> value ( "/nix/var/nix/gcroots/per-user/" ++ username )
+        <> showDefault
+        <> metavar "PATH"
+
+      _sopsTemplates <- option str $
+        long "templates"
+        <> value "templates"
+        <> help "The templates directory"
+        <> showDefault
+        <> metavar "PATH"
+
+      _sopsErrorFolder <- option str $
+        long "error-folder"
+        <> value "errors"
+        <> help "The directory to put errors in."
+        <> showDefault
+        <> metavar "PATH"
+
+      return $ ServerOptions {..}
 
     addWork =
       addCommand "work"
