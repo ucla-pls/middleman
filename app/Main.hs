@@ -86,13 +86,6 @@ main = do
         <> showDefault
         <> metavar "PATH"
 
-      _sopsTemplates <- option str $
-        long "templates"
-        <> value "templates"
-        <> help "The templates directory"
-        <> showDefault
-        <> metavar "PATH"
-
       _sopsErrorFolder <- option str $
         long "error-folder"
         <> value "errors"

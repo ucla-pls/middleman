@@ -51,6 +51,5 @@ runDevelop = do
           "user=middleman password=middleman port=5432 connect_timeout=10"
           "ssh://localhost"
           ( "/nix/var/nix/gcroots/per-user/" ++ username )
-          "templates"
           "errors"
       )

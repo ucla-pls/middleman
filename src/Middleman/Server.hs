@@ -69,7 +69,6 @@ data ServerOptions = ServerOptions
   { _sopsConnectionString :: !Text
   , _sopsStoreUrl :: !Store
   , _sopsGCRoot :: !FilePath
-  , _sopsTemplates :: !FilePath
   , _sopsErrorFolder :: !FilePath
   }
 makeClassy ''ServerOptions
@@ -86,9 +85,6 @@ instance HasErrorFolder ServerApp where
 
 instance HasOptions ServerApp where
   options = app . Import.options
-
-instance HasTemplates ServerApp where
-  templatesL = serverOptions . sopsTemplates
 
 instance HasServerOptions ServerApp where
   serverOptions = sOptions

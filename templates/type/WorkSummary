@@ -1,6 +1,0 @@
-{ active :: Number
-, timedout :: Number
-, failed :: Number
-, waiting :: Number
-, retried :: Number
-}

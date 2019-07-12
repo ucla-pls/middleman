@@ -7,7 +7,7 @@ Maintainer  : kalhuage@cs.ucla.edu
 Stability   : experimental
 Description : A simple web frontend
 -}
-module Middleman.WebServer (webserver, HasTemplates(..)) where
+module Middleman.WebServer (webserver) where
 
 -- base
 import Data.Monoid
@@ -35,9 +35,6 @@ import Middleman.DTO ()
 import Middleman.Server.Control
 import Middleman.Server.Model (HasSqlPool)
 import qualified Middleman.Server.Model as DB
-
-class HasTemplates env where
-  templatesL :: Lens' env FilePath
 
 type Action env =
   (HasSqlPool env, HasLogFunc env)
