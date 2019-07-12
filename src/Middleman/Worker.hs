@@ -13,10 +13,12 @@ module Middleman.Worker
 
 -- base
 import qualified Data.Map as Map
+import System.IO.Error (isDoesNotExistError)
 import Text.Read
 
 -- rio
 import RIO.Process
+import RIO.Directory
 import RIO.List as List
 import qualified RIO.Text as Text
 import qualified RIO.ByteString.Lazy as BL
@@ -93,14 +95,15 @@ workerApp = do
 
     runWork info (WorkDetails {..}) = do
       let
-        jd = entityVal workDetailsJobDescription
+        Entity ji jd = workDetailsJobDescription
         drv = jobDescriptionDerivation jd
+        drvlink = "middleman-link/" ++ (show . keyToInt $ ji)
         timelimit = groupTimeout . entityVal $ workDetailsGroup
 
       logInfo $ "Got work from server " <> display workDetailsId
       logDebug $ "Running " <> display workDetailsId
       ( do
-          result <- performJob timelimit drv
+          result <- performJob timelimit drvlink drv
           case result of
             Right output -> do
               logInfo $ display workDetailsId
@@ -121,6 +124,7 @@ workerApp = do
             <> " was rudely interrupted by " <> displayShow e <> ", retrying it."
           Client.finishWork workDetailsId Retry BL.empty
         )
+      removeIfExists drvlink
 
     safePullWork workerId fm =
       bracketOnError (Client.pullWork workerId)
@@ -148,14 +152,13 @@ performJob ::
   ( HasLogFunc env, HasProcessContext env)
   => Double
   -- ^ Timelimit in seconds
+  -> FilePath
   -> Derivation
   -- ^ Derivation name
   -> RIO env (Either (Maybe BL.ByteString) OutputPath)
-performJob timelimit drv = do
-  threadId <- myThreadId
+performJob timelimit drvlink drv = do
   succ <- timeout (seconds timelimit)
-    $ Nix.realizeDerivation drv
-          ("middleman-link/" ++ show threadId)
+    $ Nix.realizeDerivation drv drvlink
   return $ case succ of
     Just (Right [fp]) -> Right fp
     Just (Left msg) -> Left (Just msg)
@@ -221,6 +224,14 @@ instance Show WorkerException where
 instance Exception WorkerException
 
 -- * Utils
+
+-- from https://stackoverflow.com/questions/8502201/remove-file-if-it-exists
+removeIfExists :: MonadIO m => FilePath -> m ()
+removeIfExists fileName = liftIO $ removeFile fileName `catch` handleExists
+  where
+    handleExists e
+      | isDoesNotExistError e = return ()
+      | otherwise = throwIO e
 
 -- | Gets the hostname in the current system using this command
 getHostName ::

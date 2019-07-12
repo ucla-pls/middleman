@@ -11,6 +11,7 @@ Description : The data transfer objects of middleman
 
 module Middleman.DTO
   ( DB.Entity (..)
+  , keyToInt
 
   , DB.Group (..)
   , DB.GroupId
@@ -78,6 +79,9 @@ data AddTime =
   }
 
 deriveJSON (def 0) ''AddTime
+
+keyToInt :: (DB.ToBackendKey DB.SqlBackend r) => DB.Key r -> Int64
+keyToInt = DB.fromSqlKey
 
 instance (Parsable DB.GroupId) where
   parseParam txt =
