@@ -316,7 +316,8 @@ finishWork workId success msg = do
 
   w <- findWorkDetails workId `orFail` ItemNotFoundException workId
 
-  let (start, end) = (DB.workDetailsStarted w, DB.resultEnded result)
+  let start = DB.workDetailsStarted w
+      end = DB.resultEnded result
   when (start >= end) $
     throwIO . InvalidInput $
       "The end time should be later than the start time: "
