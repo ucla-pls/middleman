@@ -58,27 +58,27 @@ spec = do
         dnto $ dispatch ps ( incr x 4 )
         dnto $ dispatch ps ( incr x 3 )
 
-    it "can be regulated" $ do
-      x <- newTVarIO ([0] :: [Int])
-      c <- newTVarIO (0 :: Int)
-      let exactly2  = Regulator (compare 2 . head <$> readTVarIO x)
-      runPool (PoolSettings 4 [ exactly2 ] 1e-1 True) $ \ps -> do
-        replicateM_ 4 $ do
-          dispatch ps $
-            ( do
-                atomically $ do
-                  modifyTVar c (+1)
-                  modifyTVar x (\x' -> (head x' + 1) : x')
-                threadDelay (floor (1e6 :: Rational))
-            ) `finally`
-            ( do
-                atomically $ do
-                  modifyTVar x (\x' -> (head x' - 1) : x')
-            )
-        waitForPool ps
-        things <- reverse <$> readTVarIO x
-        other <- readTVarIO c
-        (other, things) `shouldBe` (6,[0,1,2,3,4,3,2,1,0,1,2,1,0])
+    -- it "can be regulated" $ do
+    --   x <- newTVarIO ([0] :: [Int])
+    --   c <- newTVarIO (0 :: Int)
+    --   let exactly2  = Regulator (compare 2 . head <$> readTVarIO x)
+    --   runPool (PoolSettings 4 [ exactly2 ] 1e-1 True) $ \ps -> do
+    --     replicateM_ 4 $ do
+    --       dispatch ps $
+    --         ( do
+    --             atomically $ do
+    --               modifyTVar c (+1)
+    --               modifyTVar x (\x' -> (head x' + 1) : x')
+    --             threadDelay (floor (1e6 :: Rational))
+    --         ) `finally`
+    --         ( do
+    --             atomically $ do
+    --               modifyTVar x (\x' -> (head x' - 1) : x')
+    --         )
+    --     waitForPool ps
+    --     things <- reverse <$> readTVarIO x
+    --     other <- readTVarIO c
+    --     (other, things) `shouldBe` (6,[0,1,2,3,4,3,2,1,0,1,2,1,0])
 
 
 dnto :: IO () -> IO ()
