@@ -39,7 +39,7 @@ dependencies:
 - network
 - persistent
 - persistent-postgresql >= 2.8.2.0
-- persistent-template 
+- persistent-template
 - process >= 1.6.3.0
 - resource-pool
 - rio >= 0.1.1.0
@@ -52,6 +52,7 @@ dependencies:
 - wai
 - wai-extra
 - wreq
+- text
 
 ghc-options:
 - -Wall

@@ -91,6 +91,10 @@ instance (Parsable DB.JobDescriptionId) where
   parseParam txt =
     DB.toSqlKey <$> parseParam txt
 
+instance (Parsable DB.JobId) where
+  parseParam txt =
+    DB.toSqlKey <$> parseParam txt
+
 instance (Parsable DB.WorkerId) where
   parseParam txt =
     DB.toSqlKey <$> parseParam txt

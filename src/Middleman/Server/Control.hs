@@ -211,6 +211,15 @@ publishJob descId = do
     <> display (DB.entityKey ejob) <> "."
   return ejob
 
+findJob ::
+  DB.JobId -> Server env (Maybe (DB.Entity DB.Job))
+findJob jobId = do
+  ejob <- DB.inDB ( DB.findJob jobId )
+  logDebug $
+    maybe "Didn't find" (const "Found") ejob
+    <> " a job when looking for " <> display jobId <> "."
+  return ejob
+
 listJobs ::
   DB.JobQuery
   -> Server m [DB.Entity DB.Job]

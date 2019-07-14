@@ -42,6 +42,7 @@ module Middleman.Server.Model
   , JobId
   , createJob
   , JobQuery (..)
+  , findJob
   , listJobs
 
   , JobSummary (..)
@@ -210,7 +211,7 @@ findGroup groupId = do
   P.getEntity groupId
 
 data GroupDetails = GroupDetails
-  { groudDId :: GroupId
+  { groupDId :: GroupId
   , groupDName :: Text
   , groupDTimeout :: Double
   , groupDJobSummary :: JobSummary
@@ -303,6 +304,10 @@ instance Semigroup JobQuery where
 instance Monoid JobQuery where
   mempty = JobQuery Nothing Nothing Nothing Nothing
 
+findJob ::
+  JobId -> DB (Maybe (Entity Job))
+findJob jobId = do
+  P.getEntity jobId
 
 listJobs ::
   JobQuery -> DB [Entity Job]
@@ -320,13 +325,14 @@ retryJobs (JobQuery {..}) =
         (\case
             Just sc -> ([ P.toPersistValue sc ], ["r.success = ?"])
             Nothing -> ([], ["w.result_id IS NULL"])
-        ) hasSuccessState
+        )
+        hasSuccessState
       , foldMap
-        (\gId -> ( P.keyToValues gId , ["jd.group_id = ?"])
-        ) hasGroupId
+        (\gId -> ( P.keyToValues gId , ["jd.group_id = ?"]))
+        hasGroupId
       , foldMap
-        (\date -> ( [ P.toPersistValue date], ["w.started < ?"])
-        ) isOlderThan
+        (\date -> ( [ P.toPersistValue date], ["w.started < ?"]))
+        isOlderThan
       ]
     sql = Text.intercalate " "
           [ "UPDATE job SET work_id =DEFAULT FROM job as j"
@@ -535,27 +541,44 @@ finishWorkWithResult workId result= do
     [ WorkResultId P.=. Just resultId ]
 
   when (resultSuccess result == Retry) $ do
-    P.updateWhere
-      [ JobWorkId P.==. Just workId ]
-      [ JobWorkId P.=. Nothing ]
+    counts <- countWorks (workJobId work)
+    when (counts < 10) $ do
+      P.updateWhere
+        [ JobId P.==. workJobId work]
+        [ JobWorkId P.=. Nothing ]
+
+countWorks ::
+  JobId -> DB Int
+countWorks jobId = do
+  P.count [ WorkJobId P.==. jobId ]
 
 data WorkQuery = WorkQuery
   { hasWorkId :: Maybe WorkId
+  , hasJobId :: Maybe JobId
   , isAfterDate :: Maybe UTCTime
   } deriving (Show, Eq)
 
 instance Semigroup WorkQuery where
   (<>) a b = WorkQuery
      (hasWorkId b <|> hasWorkId a)
+     (hasJobId b <|> hasJobId a)
      (isAfterDate b <|> isAfterDate a)
 
 instance Monoid WorkQuery where
-  mempty = WorkQuery Nothing Nothing
+  mempty = WorkQuery Nothing Nothing Nothing
 
 listWork ::
   WorkQuery -> DB [Entity Work]
-listWork _ = do
-  P.selectList [] [ P.Asc WorkStarted ]
+listWork WorkQuery {..} = do
+  let filters = concat
+        [ hasWorkId `mif` \wid-> WorkId P.==. wid
+        , hasJobId `mif` \jid -> WorkJobId P.==. jid
+        , isAfterDate `mif` \date -> WorkStarted P.>=. date
+        ]
+  P.selectList filters [ P.Asc WorkStarted ]
+  where
+    mif :: Maybe a -> (a -> b) -> [b]
+    i `mif` f = foldMap ((:[]) . f) i
 
 -- * Displays for easy handeling
 
@@ -614,4 +637,3 @@ instance Display WorkerQuery where
         hasWorkerName
     , ")"
     ]
-

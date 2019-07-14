@@ -13,6 +13,12 @@ module Middleman.WebServer (webserver) where
 import Data.Monoid
 import Text.Printf
 
+-- http-types
+import           Network.HTTP.Types.Status
+
+-- text
+import qualified Data.Text as Text
+
 -- rio
 import RIO.Time
 import qualified RIO.Text.Lazy       as TL
@@ -31,7 +37,8 @@ import           Web.Scotty.Trans as S
 -- middleman
 import Import hiding (index, Index, div)
 
-import Middleman.DTO ()
+import Nix.Types (OutputPath (..))
+import Middleman.DTO (keyToInt)
 import Middleman.Server.Control
 import Middleman.Server.Model (HasSqlPool)
 import qualified Middleman.Server.Model as DB
@@ -47,8 +54,60 @@ webserver ::
 webserver = do
   get "/" index
   get "/index.html" index
+
+  get "/groups/:id" $ do
+    key <- S.param "id"
+    findOrFail (findGroup key) $ \group -> do
+      jobs <- lift $ listJobs (mempty { DB.hasGroupId = Just key })
+      renderGroup (DB.entityVal group) jobs
+
+  get "/jobs/:id" $ do
+    key <- S.param "id"
+
+    findOrFail (findJob key) $ \(DB.Entity _ job) -> do
+      findOrFail (findJobDescription (DB.jobDescId job)) $ \jd -> do
+        works <- lift $ listWork (mempty { DB.hasJobId = Just key })
+        renderJob job (DB.entityVal jd) works
+
   get "/main.js" $
     file "static/main.js"
+
+
+renderGroup ::
+  (Monad m, ScottyError e)
+  => DB.Group
+  -> [DB.Entity DB.Job]
+  -> ActionT e m ()
+renderGroup DB.Group {..} jobs = template $ do
+  h3 (H.text groupName <> ": Jobs")
+
+  p "Jobs, green active"
+
+  div ! class_ "list-group" $
+    forM_ jobs $ \( DB.Entity jid (DB.Job {..})) -> do
+    a ! href (textValue (Text.pack $ "/jobs/" ++ show (keyToInt jid)))
+      ! class_ (
+      "list-group-item list-group-item-action flex-column align-items-start "
+      <> if isJust jobWorkId then " list-group-item-info" else ""
+      ) $ do
+      H.text (Text.pack $ storeBaseName jobOutput)
+
+renderJob ::
+  (Monad m, ScottyError e)
+  => DB.Job
+  -> DB.JobDescription
+  -> [DB.Entity DB.Work]
+  -> ActionT e m ()
+renderJob DB.Job {..} _ works = template $ do
+  h3 (H.text (Text.pack . storeBaseName $ jobOutput) <> ": Works")
+  p "Works, green active"
+  div ! class_ "list-group" $
+    forM_ works $ \( DB.Entity jid (DB.Work {..})) -> do
+    a ! href (textValue (Text.pack $ "/work/" ++ show (keyToInt jid)))
+      ! class_ (
+      "list-group-item list-group-item-action flex-column align-items-start "
+      ) $ do
+      H.text (Text.pack . show $ workStarted)
 
 
 template :: (Monad m, ScottyError e) => Html -> ActionT e m ()
@@ -156,7 +215,8 @@ index = do
 
     div ! class_ "list-group" $
       forM_ groups $ \( DB.GroupDetails {..}) -> do
-      a ! class_ "list-group-item list-group-item-action flex-column align-items-start" $ do
+      a ! href (textValue (Text.pack $ "groups/" ++ show (keyToInt groupDId)))
+        ! class_ "list-group-item list-group-item-action flex-column align-items-start" $ do
         div ! class_ "d-flex w-100 justify-content-between" $ do
           h5 ( toHtml $ groupDName )
           small $ "timeout : " <> toHtml (groupDTimeout)
@@ -175,9 +235,6 @@ index = do
         p $
           "Completed " <> toHtml (length workerDCompletedJobs )
             <> " jobs in the last 24 hours."
-
-
-
 
   where
     jobSummaryProgress DB.JobSummary {..} = do
@@ -207,3 +264,13 @@ blaze :: (ScottyError e, Monad m) => Html -> ActionT e m ()
 blaze h = do
   S.setHeader "Content-Type" "text/html"
   raw ( renderHtml h )
+
+findOrFail ::
+  (Monad m, ScottyError e)
+  => m (Maybe a)
+  -> (a -> ActionT e m ())
+  -> ActionT e m ()
+findOrFail m fm=
+  lift m >>= \case
+    Just r -> fm r
+    Nothing -> status notFound404
